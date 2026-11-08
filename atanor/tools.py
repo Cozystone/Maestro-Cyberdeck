@@ -244,12 +244,12 @@ def app_list(a, ctx):
 @tool("app.open", "앱을 연다. app은 app.list의 id나 실행 명령(예: 'foot', 'pcmanfm ~/notes'). 앱은 작업 공간 2에 열린다.",
       {"app": {"type": "string"}}, risk="write", required=["app"])
 def app_open(a, ctx):
-    env = need_gui(ctx)
     apps = _desktop_apps()
     cmd = apps[a["app"]]["exec"] if a["app"] in apps else a["app"]
     swaymsg(ctx, "workspace", "2")
-    subprocess.Popen(["bash", "-lc", cmd], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     start_new_session=True)
+    # sway가 직접 띄운다 → 앱은 세션에 속해, Core가 다시 시작돼도 살아남는다.
+    # 접근성(AT-SPI)을 켜 두어 눈(eye)이 버튼·입력칸을 정확히 알 수 있게 한다.
+    swaymsg(ctx, "exec", f"env QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 ACCESSIBILITY_ENABLED=1 {cmd}")
     return f"실행: {cmd} (작업 공간 2)"
 
 

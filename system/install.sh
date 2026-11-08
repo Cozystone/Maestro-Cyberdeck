@@ -39,6 +39,11 @@ EOF
 # brightness without password
 echo 'mind ALL=(root) NOPASSWD: /usr/bin/brightnessctl' | sudo tee /etc/sudoers.d/91-atanor-brightness >/dev/null
 sudo chmod 440 /etc/sudoers.d/91-atanor-brightness
+# computer use: pixel-free keyboard via a kernel virtual keyboard (wtype key presses are dropped by this sway)
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q python3-evdev python3-pil python3-pyatspi gir1.2-atspi-2.0 >/dev/null
+echo 'KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"' | sudo tee /etc/udev/rules.d/60-atanor-uinput.rules >/dev/null
+echo uinput | sudo tee /etc/modules-load.d/atanor-uinput.conf >/dev/null
+sudo modprobe uinput; sudo udevadm control --reload; sudo udevadm trigger --subsystem-match=misc
 sudo usermod -aG video,input,seat,render,audio mind 2>/dev/null || true
 
 # services

@@ -6,6 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=mind
+SupplementaryGroups=input
 Environment=PYTHONUNBUFFERED=1
 Environment=XDG_RUNTIME_DIR=/run/user/1001
 ExecStart=/usr/bin/python3 /opt/atanor/atanor/core.py

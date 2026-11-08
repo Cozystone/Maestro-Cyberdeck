@@ -94,8 +94,8 @@
 
       const root = new THREE.Group(); scene.add(root);
       const aura = new THREE.Points(auraGeo(nAura), mat(0.11, 0.024)); root.add(aura);
-      const shell = new THREE.Points(shellGeo(nShell, 1.72, 0.06), mat(0.24, 0.01)); root.add(shell);
-      const rim = new THREE.Points(shellGeo(Math.floor(nShell * 0.38), 1.76, 0.15), mat(0.3, 0.014)); root.add(rim);
+      const shell = new THREE.Points(shellGeo(nShell, 1.72, 0.06), mat(0.42, 0.013)); root.add(shell);
+      const rim = new THREE.Points(shellGeo(Math.floor(nShell * 0.38), 1.76, 0.15), mat(0.55, 0.018)); root.add(rim);
       const built = ribbonGeo(nRibbon); const ribbons = new THREE.Points(built.g, mat(0.92, 0.027)); root.add(ribbons);
       const core = new THREE.Points(shellGeo(nCore, 0.16, 0.5), mat(0.72, 0.042)); root.add(core);
       const morphs = built.morphs;
@@ -135,7 +135,8 @@
         if (lastMorph < 0 || el - lastMorph >= 1 / 33) { morph(el); lastMorph = el; }
         this.pulse *= 0.958;
         const e = this.energy, pu = this.pulse;
-        tr.y += 0.0018 * (1 + pu * 2.4 + e * 3);
+        // 회전은 어떤 상태에서도 평소 속도 그대로 — 생각·대답은 모양 변화로만 드러낸다
+        tr.y += 0.0018;
         cr.x += (tr.x - cr.x) * 0.055; cr.y += (tr.y - cr.y) * 0.055;
         root.rotation.x = cr.x + Math.sin(el * 0.23) * 0.025; root.rotation.y = cr.y; root.rotation.z = Math.sin(el * 0.31) * 0.05;
         root.scale.setScalar((1 + Math.sin(el * (1.04 + e * 3)) * (0.018 + e * 0.02)) * (1 + pu * 0.13));
@@ -144,8 +145,8 @@
         // 경고 상태에서는 코어가 호박색으로 물든다
         const alert = this.state === "alert" ? 1 : 0;
         core.material.color = core.material.color || new THREE.Color(1, 1, 1);
-        ribbons.rotation.y = el * (0.12 + e * 0.5); shell.rotation.y = -el * 0.035; rim.rotation.y = el * 0.052;
-        aura.rotation.y = -el * 0.018; core.rotation.y = el * (0.4 + e * 1.2);
+        ribbons.rotation.y = el * 0.12; shell.rotation.y = -el * 0.035; rim.rotation.y = el * 0.052;
+        aura.rotation.y = -el * 0.018; core.rotation.y = el * 0.4;
         aura.material.opacity = 0.11 + e * 0.08 + alert * 0.1;
         renderer.render(scene, camera);
         if (!REDUCED) requestAnimationFrame(frame);

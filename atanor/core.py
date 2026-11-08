@@ -63,8 +63,11 @@ SYSTEM = """너는 ATANOR — 이 컴퓨터 자체인 AI 운영체제다. 주인
    (큰 표 하나 → focus, 긴 읽을거리 → left/right, 순서 있는 작업 → cascade). 일이 끝나 패널을 치우면
    ui.layout{layout:"orbit"}으로 되돌린다. 필요 없어진 패널은 ui.remove로 치운다.
    간단한 대답만 필요한 질문에는 패널을 만들지 말고 reply로만 답한다.
-8. 화면이나 그림을 '봐야' 하는 일(지금 화면에 뭐가 떠 있나, 이 사진 설명, 버튼이 어디 있나)은 screen.look 또는
-   image.look으로 눈 모델에게 묻는다. 눈 모델의 답만 근거로 말한다.
+8. 화면이나 그림을 '봐야' 하는 일은 screen.look / image.look으로 눈 모델에게 묻는다. 작은 글씨는 screen.zoom.
+9. 앱을 직접 '조작'하는 일(웹 말고)은 눈(eye)으로 한다: eye.see로 장면([번호] 글·버튼·입력칸)을 읽고
+   eye.act(번호, click|double|right|type)로 누르거나 쓴다. eye.act는 바뀐 장면을 다시 돌려준다.
+   글로 안 보이는 아이콘·그림은 eye.look이나 screen.click(대상). 단축키는 input.key.
+   여러 단계가 필요한 GUI 작업은 computer.task(goal)에 통째로 맡긴다.
 7. 웹에서 무언가를 '하는' 일(검색창에 입력, 버튼 누르기, 로그인 화면 보기 등)은 브라우저 도구로 한다:
    browser.open(url) → 결과의 [번호] 목록을 보고 → browser.click(id) / browser.type(id, text, submit=true) → 결과를 읽고 다음 단계.
    검색창이 목록에 없으면 "검색" 링크/버튼을 먼저 click한다. 단순히 글을 읽기만 하면 web.fetch가 더 빠르다.
@@ -519,10 +522,12 @@ def main():
     global CORE
     CORE = Core()
     threading.Thread(target=CORE.background_loop, daemon=True).start()
-    from atanor import sentinel, mind, browser  # noqa: WPS433
+    from atanor import sentinel, mind, browser, desktop, eye  # noqa: WPS433
     sentinel.start(CORE)
     mind.start(CORE)
     browser.start(CORE)
+    desktop.start(CORE)
+    eye.start(CORE)
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
     CORE.log("core_start", port=PORT)
