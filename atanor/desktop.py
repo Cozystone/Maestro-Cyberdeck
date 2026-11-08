@@ -238,3 +238,51 @@ def start(core):
             risk="write", required=["id"])
     def desktop_act(a, ctx):
         return helper(ctx, "act", a.get("app") or "", str(a["id"]), a.get("action", "click"), a.get("text", ""))
+
+    # ── 창 지킴이: 앱 창이 닫혀 그 작업 공간이 비면 ATANOR 화면(작업 공간 1)으로 돌아온다 ──
+    # (앱은 작업 공간 2에 열린다. 그 창을 닫으면 빈 작업 공간의 검은 바탕만 남았다.)
+    import threading
+
+    def empty_focused_ws():
+        """(지금 보이는 작업 공간 이름, 창이 하나도 없는가)"""
+        wss = json.loads(T.swaymsg(None, "-t", "get_workspaces"))
+        name = next((w["name"] for w in wss if w.get("focused")), None)
+        tree = json.loads(T.swaymsg(None, "-t", "get_tree"))
+        count = [0]
+
+        def walk(n, ws=None):
+            if n.get("type") == "workspace":
+                ws = n.get("name")
+            if n.get("pid") and ws == name:
+                count[0] += 1
+            for c in n.get("nodes", []) + n.get("floating_nodes", []):
+                walk(c, ws)
+        walk(tree)
+        return name, count[0] == 0
+
+    def watch_windows():
+        while True:
+            env = T.wl_env(None)
+            if not env or "SWAYSOCK" not in env:
+                time.sleep(5)
+                continue
+            try:
+                p = subprocess.Popen(["swaymsg", "-t", "subscribe", "-m", '["window"]'], env=env,
+                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                for line in p.stdout:
+                    try:
+                        ev = json.loads(line)
+                    except ValueError:
+                        continue
+                    if ev.get("change") != "close":
+                        continue
+                    time.sleep(0.3)          # sway가 포커스를 옮길 틈
+                    ws = empty_focused_ws()
+                    if ws and ws[0] != "1" and ws[1]:
+                        T.swaymsg(None, "workspace", "1")
+                p.wait()
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(3)
+
+    threading.Thread(target=watch_windows, daemon=True, name="window-keeper").start()

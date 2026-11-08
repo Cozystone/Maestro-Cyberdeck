@@ -246,11 +246,28 @@ def app_list(a, ctx):
 def app_open(a, ctx):
     apps = _desktop_apps()
     cmd = apps[a["app"]]["exec"] if a["app"] in apps else a["app"]
+    exe = cmd.split()[0] if cmd.split() else ""
+    if exe and not shutil.which(exe):
+        alias = {"google-chrome": "chromium", "google-chrome-stable": "chromium", "chrome": "chromium",
+                 "firefox": "chromium", "nautilus": "pcmanfm", "files": "pcmanfm", "terminal": "foot"}
+        if exe.lower() in alias and shutil.which(alias[exe.lower()]):
+            cmd = alias[exe.lower()] + cmd[len(exe):]
+        else:
+            raise RuntimeError(f"'{exe}' 프로그램이 설치돼 있지 않다. app.list로 설치된 앱을 확인해라.")
+    before = {w["id"] for w in _windows(json.loads(swaymsg(ctx, "-t", "get_tree")), [])}
     swaymsg(ctx, "workspace", "2")
     # sway가 직접 띄운다 → 앱은 세션에 속해, Core가 다시 시작돼도 살아남는다.
     # 접근성(AT-SPI)을 켜 두어 눈(eye)이 버튼·입력칸을 정확히 알 수 있게 한다.
     swaymsg(ctx, "exec", f"env QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 ACCESSIBILITY_ENABLED=1 {cmd}")
-    return f"실행: {cmd} (작업 공간 2)"
+    # 창이 실제로 떴는지 확인한다. 안 뜨면 빈 검은 화면에 두지 않고 ATANOR 화면으로 돌아온다.
+    for _ in range(30):
+        time.sleep(0.5)
+        new = [w for w in _windows(json.loads(swaymsg(ctx, "-t", "get_tree")), []) if w["id"] not in before]
+        if new:
+            return f"실행: {cmd} → 창 '{new[0].get('title') or new[0].get('app')}' (작업 공간 {new[0].get('workspace')})"
+    if not [w for w in _windows(json.loads(swaymsg(ctx, "-t", "get_tree")), []) if w["workspace"] == "2"]:
+        swaymsg(ctx, "workspace", "1")
+    return f"실행 명령은 보냈지만 15초 안에 창이 뜨지 않았다: {cmd}"
 
 
 def _windows(tree, out, ws=None):
