@@ -1,0 +1,30 @@
+[Unit]
+Description=ATANOR graphical session (sway on tty1)
+After=systemd-user-sessions.service atanor-core.service seatd.service
+Wants=atanor-core.service
+Conflicts=getty@tty1.service
+
+[Service]
+User=mind
+PAMName=login
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+Environment=XDG_SESSION_TYPE=wayland
+Environment=XDG_CURRENT_DESKTOP=sway
+Environment=GTK_IM_MODULE=fcitx
+Environment=QT_IM_MODULE=fcitx
+Environment=XMODIFIERS=@im=fcitx
+Environment=WLR_RENDERER=gles2
+ExecStart=/usr/bin/sway
+Restart=always
+RestartSec=2
+UtmpIdentifier=tty1
+UtmpMode=user
+
+[Install]
+WantedBy=graphical.target

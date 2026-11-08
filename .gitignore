@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.log
+.atanor/
+*_ed25519*
+known_hosts

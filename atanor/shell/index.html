@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ko" data-state="idle">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ATANOR</title>
+<link rel="stylesheet" href="/static/style.css">
+<script>window.ATANOR_TOKEN = "__ATANOR_TOKEN__";</script>
+</head>
+<body>
+<canvas id="rain" aria-hidden="true"></canvas>
+
+<header id="sys">
+  <span id="clock"><b id="time">--:--</b> <span id="date"></span></span>
+  <span id="sig">
+    <span id="s-brain" title="두뇌">두뇌</span>
+    <span id="s-mem">기억 0</span>
+    <span id="s-net">연결</span>
+    <span id="s-bat"></span>
+  </span>
+</header>
+
+<div id="orb-wrap"><div id="orb"></div></div>
+<div id="voice" aria-live="polite"></div>
+
+<main id="stage"></main>
+
+<form id="say" autocomplete="off">
+  <span id="caret">&gt;</span>
+  <textarea id="prompt" rows="1" placeholder="무엇을 할까요" autofocus spellcheck="false"></textarea>
+  <button type="button" id="ime" title="한/영: 한/영 키, 오른쪽 Alt, Shift+Space">한</button>
+  <button type="button" id="log-toggle" title="대화 기록 (Tab)">기록</button>
+</form>
+
+<aside id="log" hidden>
+  <div id="log-head"><span>대화 기록</span><button type="button" id="log-clear">지우기</button></div>
+  <div id="messages"></div>
+</aside>
+
+<div id="confirm" hidden>
+  <div id="confirm-card">
+    <div id="confirm-kicker">승인이 필요합니다</div>
+    <div id="confirm-desc"></div>
+    <div id="confirm-note">승인하면 실행 직전에 되돌리기 지점을 만듭니다.</div>
+    <div id="confirm-actions">
+      <button type="button" id="confirm-no">거부</button>
+      <button type="button" id="confirm-yes">승인하고 실행</button>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<div id="offline" hidden>
+  <div id="offline-note">
+    <b>두뇌와 연결이 끊겼습니다</b>
+    <span>Wi-Fi와 메인 PC가 켜져 있는지 확인하세요. 다시 연결되면 저절로 돌아옵니다.</span>
+  </div>
+</div>
+
+<script src="/static/vendor/three.min.js"></script>
+<script src="/static/hangul.js"></script>
+<script src="/static/orb.js"></script>
+<script src="/static/layout.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

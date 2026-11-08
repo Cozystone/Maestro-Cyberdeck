@@ -1,0 +1,18 @@
+[Unit]
+Description=ATANOR Core (AI OS layer)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mind
+Environment=PYTHONUNBUFFERED=1
+Environment=XDG_RUNTIME_DIR=/run/user/1001
+ExecStart=/usr/bin/python3 /opt/atanor/atanor/core.py
+Restart=always
+RestartSec=3
+# Core touches the system only through sudo (logged) — keep its own process modest.
+Nice=5
+
+[Install]
+WantedBy=multi-user.target
