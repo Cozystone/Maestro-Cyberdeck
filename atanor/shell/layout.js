@@ -1,6 +1,6 @@
 // ATANOR 배치 엔진 — AI가 고른 배치(또는 auto)에 따라 오브와 패널의 자리를 정한다.
 // 배치: orbit | left | right | crown | focus | scatter | cascade | free | auto
-// auto는 패널 수에 맞는 배치들 중에서 구성이 바뀔 때마다 하나를 고른다 → 매번 다르게 보인다.
+// 기본은 orbit(오브가 가운데). auto는 패널 수에 맞는 배치들 중에서 구성이 바뀔 때마다 하나를 고른다 → 매번 다르게 보인다.
 (function () {
   const GAP = 18, TOP = 64, BOTTOM = 112, SIDE = 28;
   const rnd = (seed) => () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
@@ -25,6 +25,22 @@
 
   function overlap(a, b, pad = GAP) { return a.x < b.x + b.w + pad && b.x < a.x + a.w + pad && a.y < b.y + b.h + pad && b.y < a.y + a.h + pad; }
 
+  // 패널이 가운데 오브를 가리면 위·아래·옆 중 가장 조금 움직이는 쪽으로 비켜 준다
+  // 원하는 자리가 오브·답글·다른 패널과 겹치면, 겹치지 않는 가장 가까운 빈자리로 옮긴다
+  function settle(rc, blocks, W, H) {
+    const free = (o) => blocks.every((b) => !overlap(o, b, b.pad ?? 10));
+    if (free(rc)) return rc;
+    const maxX = W - SIDE - rc.w, maxY = H - BOTTOM - rc.h;
+    let best = null, bd = Infinity;
+    for (let y = TOP; y <= Math.max(TOP, maxY); y += 16) {
+      for (let x = SIDE; x <= Math.max(SIDE, maxX); x += 16) {
+        const d = Math.hypot(x - rc.x, y - rc.y);
+        if (d < bd) { const o = { ...rc, x, y }; if (free(o)) { best = o; bd = d; } }
+      }
+    }
+    return best || rc;
+  }
+
   const LAYOUTS = {
     idle(els, W, H) { return { orb: { cx: W / 2, cy: H * 0.42, s: Math.min(W, H) * 0.56 }, rects: [] }; },
 
@@ -32,12 +48,20 @@
       const s = Math.min(W, H) * 0.36, cx = W / 2, cy = (TOP + H - BOTTOM) / 2;
       const base = Math.min(380, W * 0.23), ms = measureEach(els, base, W), n = els.length;
       const ry = (H - TOP - BOTTOM) / 2 - 40, a0 = -Math.PI / 2 + (r() - 0.5) * 0.6;
-      const rects = els.map((el, i) => {
-        const { w, h } = ms[i], a = a0 + (i / n) * Math.PI * 2, rx = W / 2 - w / 2 - SIDE;
+      // 오브 몸통과 그 아래 답글 줄은 비워 둔다
+      const vw = Math.min(640, Math.max(260, s * 1.6));
+      const blocks = [{ x: cx - s * 0.4, y: cy - s * 0.4, w: s * 0.8, h: s * 0.8, pad: 16 },
+        { x: cx - vw / 2, y: cy + s * 0.4, w: vw, h: 56, pad: 8 }];
+      const rects = [];
+      // 큰 패널부터 자리를 잡아야 빈자리를 찾기 쉽다
+      const order = els.map((el, i) => i).sort((i, j) => ms[j].w * ms[j].h - ms[i].w * ms[i].h);
+      for (const i of order) {
+        const el = els[i], { w, h } = ms[i], a = a0 + (i / n) * Math.PI * 2, rx = W / 2 - w / 2 - SIDE;
         const x = Math.max(SIDE, Math.min(W - w - SIDE, cx + Math.cos(a) * rx - w / 2));
         const y = Math.max(TOP, Math.min(H - BOTTOM - h, cy + Math.sin(a) * ry - h / 2));
-        return { el, x, y, w, h };
-      });
+        const rc = settle({ el, x, y, w, h }, blocks, W, H);
+        rects.push(rc); blocks.push(rc);
+      }
       return { orb: { cx, cy, s }, rects };
     },
 
@@ -116,7 +140,7 @@
       const els = [...stage.querySelectorAll(".panel")].sort((a, b) => (+a.style.order || 50) - (+b.style.order || 50));
       const W = innerWidth, H = innerHeight;
       const sig = els.map((e) => e.dataset.id).join("|") + mode;
-      let m = !els.length ? "idle" : LAYOUTS[mode] && mode !== "idle" ? mode : "auto";
+      let m = !els.length ? "idle" : LAYOUTS[mode] && mode !== "idle" ? mode : mode === "auto" ? "auto" : "orbit";
       if (m === "auto") {
         if (sig !== lastSig) { // 구성이 바뀔 때마다 새로 고른다
           const opts = AUTO[Math.min(5, els.length)] || AUTO[5];

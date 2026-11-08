@@ -17,10 +17,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 UPSTREAM = "http://127.0.0.1:11434"
 LISTEN = ("127.0.0.1", 11435)
-ALLOWED_MODELS = {"dolphin24", "dolphin24:latest", "nomic-embed-text", "nomic-embed-text:latest", "gpt-oss:20b"}
+ALLOWED_MODELS = {"dolphin24", "dolphin24:latest", "nomic-embed-text", "nomic-embed-text:latest", "gpt-oss:20b", "qwen2.5vl:7b"}
 POST_PATHS = {"/api/chat", "/api/embed", "/v1/chat/completions"}
 GET_PATHS = {"/api/version", "/api/tags", "/v1/models", "/api/ps"}
-MAX_BODY = 2_000_000
+MAX_BODY = 4_000_000
 RATE = 10  # 초당 최대 요청
 LOG = None
 

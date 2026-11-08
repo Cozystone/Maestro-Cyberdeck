@@ -35,6 +35,7 @@ MAX_STEPS = 15
 DEFAULT_CONFIG = {
     "brain": {"type": "ollama", "url": "http://127.0.0.1:11434", "model": "dolphin24"},
     "embed": {"url": "http://127.0.0.1:11434", "model": "nomic-embed-text"},
+    "vision": {"url": "http://127.0.0.1:11434", "model": "qwen2.5vl:7b"},
     "owner": "주인",
     "consolidate_hour": 4,
 }
@@ -58,9 +59,12 @@ SYSTEM = """너는 ATANOR — 이 컴퓨터 자체인 AI 운영체제다. 주인
 3. 화면에 보여주면 좋은 정보(목록, 표, 상태, 진행)는 ui.panel로 띄운다. 패널 id는 의미 있게(예: "weather", "todo").
    도구 결과를 보여줄 때는 반드시 live 패널을 쓴다(데이터를 직접 베껴 넣지 않는다). 예: 홈 폴더 →
    ui.panel{id:"home", title:"홈 폴더", type:"live", data:{tool:"file.list", args:{path:"~"}, view:"table"}}.
-   패널을 새로 꾸릴 때는 내용에 어울리는 배치를 ui.layout으로 직접 고른다. 매번 같은 배치를 쓰지 말고,
-   정보의 성격(한눈에 보기/읽기/집중/순서)에 맞춰 바꾼다. 일이 끝나 필요 없어진 패널은 ui.remove로 치운다.
+   기본 배치는 orbit(오브가 화면 가운데, 패널이 둘레)다. 내용이 꼭 필요로 할 때만 ui.layout으로 바꾼다
+   (큰 표 하나 → focus, 긴 읽을거리 → left/right, 순서 있는 작업 → cascade). 일이 끝나 패널을 치우면
+   ui.layout{layout:"orbit"}으로 되돌린다. 필요 없어진 패널은 ui.remove로 치운다.
    간단한 대답만 필요한 질문에는 패널을 만들지 말고 reply로만 답한다.
+8. 화면이나 그림을 '봐야' 하는 일(지금 화면에 뭐가 떠 있나, 이 사진 설명, 버튼이 어디 있나)은 screen.look 또는
+   image.look으로 눈 모델에게 묻는다. 눈 모델의 답만 근거로 말한다.
 7. 웹에서 무언가를 '하는' 일(검색창에 입력, 버튼 누르기, 로그인 화면 보기 등)은 브라우저 도구로 한다:
    browser.open(url) → 결과의 [번호] 목록을 보고 → browser.click(id) / browser.type(id, text, submit=true) → 결과를 읽고 다음 단계.
    검색창이 목록에 없으면 "검색" 링크/버튼을 먼저 click한다. 단순히 글을 읽기만 하면 web.fetch가 더 빠르다.
@@ -94,7 +98,7 @@ class Core:
         self.brain = Brain(self.cfg["brain"])
         self.memory = Memory(os.path.join(HOME, "memory.db"), self.cfg["embed"]["url"], self.cfg["embed"]["model"])
         self.ui_state = self._load_json("ui.json", {"panels": {}, "theme": {"mode": "dark", "accent": "#8b7bff",
-                                                                             "layout": "grid"}})
+                                                                             "layout": "orbit"}})
         self.schedules = self._load_json("schedules.json", [])
         self.history = []            # 화면에 보여줄 대화 기록
         self.subscribers = []        # SSE 구독자 큐

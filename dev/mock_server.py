@@ -65,7 +65,7 @@ class H(BaseHTTPRequestHandler):
     def state(self):
         ref = parse_qs(urlparse(self.headers.get("Referer", "")).query)
         scene = (ref.get("scene") or ["brief"])[0]
-        layout = (ref.get("layout") or ["auto"])[0]
+        layout = (ref.get("layout") or ["orbit"])[0]
         panels = {k: P[k] for k in SCENES.get(scene, [])}
         hist = [{"role": "user", "text": "아침 브리핑 보여줘", "t": "2026-11-08T09:11:50"},
                 {"role": "assistant", "text": "좋은 아침이에요. 오늘 필요한 것만 모아 뒀어요.", "t": "2026-11-08T09:12:01"}] if panels else []

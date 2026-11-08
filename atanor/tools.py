@@ -13,6 +13,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import base64
 import time
 import urllib.request
 
@@ -298,6 +299,60 @@ def screen_capture(a, ctx):
     return path if code == 0 else f"실패: {err}"
 
 
+def _vision(ctx, prompt, img_bytes):
+    """눈 모델(이미지를 보는 모델)에게 그림과 질문을 보낸다."""
+    v = ctx.cfg.get("vision") or {}
+    body = {"model": v.get("model", "qwen2.5vl:7b"), "stream": False, "options": {"temperature": 0.1},
+            "messages": [{"role": "user", "content": prompt, "images": [base64.b64encode(img_bytes).decode()]}]}
+    req = urllib.request.Request(v.get("url", "http://127.0.0.1:11434").rstrip("/") + "/api/chat",
+                                 data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=300) as r:
+        return json.loads(r.read())["message"]["content"].strip()
+
+
+def _shot(ctx, scale="0.85"):
+    path = os.path.expanduser(f"~/Pictures/screenshots/{time.strftime('%Y%m%d-%H%M%S')}.png")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    code, _, err = run(["grim", "-s", scale, path], env=need_gui(ctx))
+    if code != 0:
+        raise RuntimeError(err)
+    return path
+
+
+VISION_RULE = "보이는 것만 말하고 보이지 않는 것은 지어내지 마라. 한국어로 간결하게 답하라."
+
+
+@tool("screen.look", "지금 화면을 캡처해 눈 모델에게 보여주고 질문에 대한 답을 받는다. "
+      "예: '화면에 무엇이 떠 있나', '오류 메시지가 뭐라고 쓰여 있나', '저장 버튼은 어디 있나(위치를 화면 비율 %로)'.",
+      {"question": {"type": "string"}}, required=["question"])
+def screen_look(a, ctx):
+    try:
+        path = _shot(ctx)
+        ans = _vision(ctx, f"이것은 컴퓨터 화면 캡처다. {VISION_RULE}\n질문: {a['question']}", open(path, "rb").read())
+        return {"답": ans, "캡처": path}
+    except Exception as e:  # noqa: BLE001
+        return f"실패: {e}"
+
+
+@tool("image.look", "이미지 파일(경로 또는 http 주소)을 눈 모델에게 보여주고 질문에 대한 답을 받는다.",
+      {"path": {"type": "string"}, "question": {"type": "string"}}, required=["path"])
+def image_look(a, ctx):
+    try:
+        src = a["path"]
+        if re.match(r"^https?://", src):
+            with urllib.request.urlopen(urllib.request.Request(src, headers={"User-Agent": "ATANOR"}), timeout=30) as r:
+                data = r.read(8_000_000)
+        else:
+            data = open(os.path.expanduser(src), "rb").read()
+        if len(data) > 1_400_000 and shutil.which("convert"):
+            p = subprocess.run(["convert", "-", "-resize", "1600x1600>", "-quality", "80", "jpg:-"], input=data,
+                               capture_output=True, timeout=60)
+            data = p.stdout or data
+        return {"답": _vision(ctx, f"{VISION_RULE}\n질문: {a.get('question') or '이 그림을 설명하라.'}", data)}
+    except Exception as e:  # noqa: BLE001
+        return f"실패: {e}"
+
+
 @tool("input.type", "현재 포커스된 창에 글자를 입력한다(한글 가능).", {"text": {"type": "string"}},
       risk="write", required=["text"])
 def input_type(a, ctx):
@@ -485,14 +540,14 @@ def ui_remove(a, ctx):
     return "제거"
 
 
-LAYOUTS = ("auto", "orbit", "left", "right", "crown", "focus", "scatter", "cascade", "free")
+LAYOUTS = ("orbit", "auto", "left", "right", "crown", "focus", "scatter", "cascade", "free")
 
 
 @tool("ui.layout", "화면 배치를 고른다. 오브와 패널의 자리가 부드럽게 옮겨간다. "
       "orbit: 오브가 가운데, 패널이 둘레를 돈다(여러 정보 한눈에) | left/right: 오브가 한쪽에 크게, 패널은 반대편에 쌓임(읽을 거리) | "
       "crown: 오브가 위에 작게, 패널이 아래 격자(표·목록 많을 때) | focus: 첫 패널 하나를 크게, 나머지는 아래(한 가지에 집중) | "
       "scatter: 오브 둘레에 자유롭게 흩어짐(가벼운 대화) | cascade: 계단처럼 흐름(단계·순서) | "
-      "free: 패널마다 ui.panel의 x,y,w(%)로 직접 배치 | auto: 바뀔 때마다 알아서 고름. "
+      "free: 패널마다 ui.panel의 x,y,w(%)로 직접 배치 | auto: 바뀔 때마다 알아서 고름. 기본은 orbit. "
       "seed(정수)를 바꾸면 같은 배치라도 모양이 달라진다.",
       {"layout": {"type": "string", "enum": list(LAYOUTS)}, "seed": {"type": "integer"}}, risk="write", required=["layout"])
 def ui_layout(a, ctx):
