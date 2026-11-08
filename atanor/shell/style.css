@@ -138,3 +138,8 @@ iframe.appframe { width: 100%; height: 360px; border: 0; background: transparent
 .clock b { font: 300 44px/1 var(--mono); letter-spacing: .02em; font-variant-numeric: tabular-nums; }
 .clock span { color: var(--dim); font-size: 14px; } .clock small { color: var(--faint); font-size: 12px; }
 .todo li { cursor: pointer; } .todo li.done { color: var(--faint); text-decoration: line-through; } .dim { color: var(--dim); }
+#mic { display: grid; place-items: center; padding: 3px 7px; color: var(--dim); border-color: transparent; cursor: pointer; }
+#mic[data-state="wake"] { color: var(--cyan); }
+#mic[data-state="once"], #mic[data-state="hearing"], #mic[data-state="recognizing"] { color: var(--accent, var(--cyan)); border-color: var(--accent, var(--cyan)); box-shadow: 0 0 12px color-mix(in srgb, var(--accent, #20f4ff) 45%, transparent); }
+#mic[data-state="nomic"], #mic[data-state="error"] { color: var(--faint); }
+#orb-wrap { cursor: pointer; }

@@ -41,6 +41,9 @@ echo 'mind ALL=(root) NOPASSWD: /usr/bin/brightnessctl' | sudo tee /etc/sudoers.
 sudo chmod 440 /etc/sudoers.d/91-atanor-brightness
 # computer use: pixel-free keyboard via a kernel virtual keyboard (wtype key presses are dropped by this sway)
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q python3-evdev python3-pil python3-pyatspi gir1.2-atspi-2.0 tesseract-ocr tesseract-ocr-kor python3-numpy >/dev/null
+# voice: Korean neural speech for replies (only the reply text leaves the laptop); speech recognition runs on the PC
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q python3-pip python3-aiohttp >/dev/null
+python3 -m pip install -q --user --break-system-packages --upgrade edge-tts >/dev/null
 echo 'KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"' | sudo tee /etc/udev/rules.d/60-atanor-uinput.rules >/dev/null
 echo uinput | sudo tee /etc/modules-load.d/atanor-uinput.conf >/dev/null
 sudo modprobe uinput; sudo udevadm control --reload; sudo udevadm trigger --subsystem-match=misc

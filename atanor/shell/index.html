@@ -28,6 +28,7 @@
 <form id="say" autocomplete="off">
   <span id="caret">&gt;</span>
   <textarea id="prompt" rows="1" placeholder="무엇을 할까요" autofocus spellcheck="false"></textarea>
+  <button type="button" id="mic" data-state="off" title="말하기 (Ctrl+Space)" aria-label="말하기"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
   <button type="button" id="ime" title="한/영: 한/영 키, 오른쪽 Alt, Shift+Space">한</button>
   <button type="button" id="log-toggle" title="대화 기록 (Tab)">기록</button>
 </form>
@@ -62,6 +63,7 @@
 <script src="/static/hangul.js"></script>
 <script src="/static/orb.js"></script>
 <script src="/static/layout.js"></script>
+<script src="/static/voice.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

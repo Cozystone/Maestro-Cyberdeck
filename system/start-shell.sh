@@ -20,5 +20,6 @@ exec chromium \
   --render-node-override=/dev/dri/renderD128 --disable-features=Vulkan --ignore-gpu-blocklist \
   --disable-component-update --disable-background-networking \
   --autoplay-policy=no-user-gesture-required --lang=ko \
+  --use-fake-ui-for-media-stream \
   http://127.0.0.1:7700/ \
   >/dev/null 2>&1

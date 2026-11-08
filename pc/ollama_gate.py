@@ -4,6 +4,8 @@ HP 노트북은 SSH 터널을 통해 이 문지기(127.0.0.1:11435)에만 닿는
 - 허용된 경로만 통과: 대화(/api/chat, /v1/chat/completions), 임베딩(/api/embed), 버전·모델 목록
 - 허용된 모델만 사용: ALLOWED_MODELS
 - 요청 크기 제한, 초당 요청 수 제한
+- 음성 인식(/atanor/stt): 날 PCM 숫자만 받는다(최대 20초). 오디오 파일 해석기를 거치지 않으므로
+  조작된 파일로 이 PC의 코덱을 노리는 길이 없다.
 모델 다운로드·삭제·생성·복사(/api/pull, /api/delete, /api/create, /api/push, /api/copy, /api/blobs) 같은
 관리 기능은 전부 거부한다. 노트북이 뚫려도 이 PC의 Ollama를 조작하거나 파일에 손댈 수 없게 하기 위함.
 """
@@ -42,6 +44,53 @@ def rate_ok():
             _bucket.update(t=now, n=0)
         _bucket["n"] += 1
         return _bucket["n"] <= RATE
+
+
+# ───────── 음성 인식(whisper) — 필요할 때 올리고, 오래 안 쓰면 GPU에서 내린다 ─────────
+STT_MAX = 16000 * 2 * 20   # 최대 20초
+STT_IDLE = 900
+_stt = {"m": None, "t": 0.0, "name": ""}
+_stt_lock = threading.Lock()
+HALLU = ("시청해 주셔서", "구독과 좋아요", "MBC 뉴스", "자막 제공", "다음 영상에서")
+
+
+def _stt_model():
+    from faster_whisper import WhisperModel  # noqa: WPS433  쓸 때만 불러온다
+    for name, dev, ct in (("large-v3", "cuda", "int8_float16"), ("small", "cuda", "float16"), ("small", "cpu", "int8")):
+        try:
+            m = WhisperModel(name, device=dev, compute_type=ct)
+            log(f"stt model {name} {dev} {ct}")
+            return m, f"{name}/{dev}"
+        except Exception as e:  # noqa: BLE001  GPU가 꽉 찼으면 다음 후보
+            log(f"stt load fail {name} {dev}: {e}")
+    raise RuntimeError("no stt model")
+
+
+def transcribe(pcm):
+    import numpy as np  # noqa: WPS433
+    audio = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
+    with _stt_lock:
+        if _stt["m"] is None:
+            _stt["m"], _stt["name"] = _stt_model()
+        _stt["t"] = time.time()
+        # 화면이 이미 말소리 구간만 잘라 보낸다. 짧은 말(이름만 부르기)은 whisper의 무음 필터가 지워 버리므로 끈다.
+        segs, _ = _stt["m"].transcribe(audio, language="ko", beam_size=1, vad_filter=len(audio) > 16000 * 5,
+                                       initial_prompt="아타노르", condition_on_previous_text=False)
+        segs = [s for s in segs if s.no_speech_prob < 0.6]
+    text = "".join(s.text for s in segs).strip()
+    if any(h in text for h in HALLU) and len(text) < 30:   # 조용할 때 whisper가 지어내는 상투구
+        text = ""
+    log(f"STT {len(pcm) // 32}ms -> {len(text)} chars")
+    return text
+
+
+def _stt_reaper():
+    while True:
+        time.sleep(60)
+        with _stt_lock:
+            if _stt["m"] is not None and time.time() - _stt["t"] > STT_IDLE:
+                _stt["m"] = None
+                log("stt model unloaded (idle)")
 
 
 class Gate(BaseHTTPRequestHandler):
@@ -88,10 +137,29 @@ class Gate(BaseHTTPRequestHandler):
             return self.deny(403, "path not allowed")
         self.relay("GET")
 
+    def stt(self):
+        """음성 → 글자. 노트북은 16kHz 16비트 모노 '날 PCM 숫자'만 보낼 수 있다(파일 형식 해석기를 쓰지 않는다)."""
+        n = int(self.headers.get("Content-Length") or 0)
+        if n < 3200 or n > STT_MAX or n % 2:
+            return self.deny(413, "audio size")
+        pcm = self.rfile.read(n)
+        try:
+            text = transcribe(pcm)
+        except Exception as e:  # noqa: BLE001
+            return self.deny(500, f"stt failed: {type(e).__name__}")
+        body = json.dumps({"text": text}, ensure_ascii=False).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_POST(self):
         if not rate_ok():
             return self.deny(429, "rate limit")
         path = self.path.split("?")[0]
+        if path == "/atanor/stt":
+            return self.stt()
         if path not in POST_PATHS:
             return self.deny(403, "path not allowed")
         n = int(self.headers.get("Content-Length") or 0)
@@ -119,5 +187,6 @@ if __name__ == "__main__":
     LOG = sys.argv[1] if len(sys.argv) > 1 else None
     srv = ThreadingHTTPServer(LISTEN, Gate)
     srv.daemon_threads = True
+    threading.Thread(target=_stt_reaper, daemon=True).start()
     log(f"gate listening on {LISTEN[0]}:{LISTEN[1]}")
     srv.serve_forever()

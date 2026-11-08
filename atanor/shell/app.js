@@ -11,6 +11,26 @@
   const orb = new Orb($("#orb"));
   const stage = $("#stage"), orbWrap = $("#orb-wrap"), voice = $("#voice");
   let ui = { panels: {}, theme: {} };
+  // ---------- 목소리: 듣기 · 말하기 ----------
+  const VOX = new AtanorVoice({
+    token: T, orb,
+    onState: (st, info) => {
+      const mic = $("#mic"); mic.dataset.state = st;
+      if (st === "once") { orb.set("listen"); voice.classList.remove("murmur"); voice.classList.add("thinking"); voice.textContent = "듣고 있어요"; }
+      else if (st === "hearing") voice.textContent = "듣고 있어요…";
+      else if (st === "recognizing") voice.textContent = "알아듣는 중";
+      else if (st === "nomic") toast("마이크를 쓸 수 없어요", info, true);
+      else if (st === "error") toast("음성 인식", info, true);
+      else if ((st === "wake" || st === "off") && voice.textContent.startsWith("듣고")) { voice.textContent = ""; voice.classList.remove("thinking"); orb.set("idle"); }
+      mic.title = { wake: "부르면 대답합니다: '아타노르, …' (Ctrl+Space: 바로 말하기)", off: "말하기 (Ctrl+Space)", once: "듣는 중 — 다시 누르면 취소" }[st] || mic.title;
+    },
+    onText: (text, kind) => {
+      if (kind === "busy") toast("아직 하던 일이 있어요", `들은 말: ${text}`);
+      else if (kind === "none") { voice.classList.remove("thinking"); voice.textContent = text ? `"${text}"` : "잘 못 들었어요"; orb.set("idle"); }
+    },
+  });
+  const speakOn = () => ui.theme.speak !== false;
+  window.__vox = VOX;   // 진단용
   const relayout = () => Layout.apply(stage, orbWrap, voice, ui.theme.layout || "auto", ui.theme.layout_seed);
   let rl = null; const relayoutSoon = () => { clearTimeout(rl); rl = setTimeout(relayout, 30); };
   addEventListener("resize", relayoutSoon);
@@ -85,6 +105,7 @@
     const rs = document.documentElement.style, sc = Math.max(0.8, Math.min(1.6, +th.scale || 1));
     if (rs.getPropertyValue("--ui-scale") !== String(sc)) { rs.setProperty("--ui-scale", sc); setTimeout(relayout, 60); }
     if (/^#[0-9a-f]{6}$/i.test(th.accent || "")) rs.setProperty("--accent", th.accent); else rs.removeProperty("--accent");
+    if (VOX.wake !== (th.wake !== false)) VOX.setWake(th.wake !== false);   // 기본: 부르면 대답
     const panels = Object.values(ui.panels || {}).sort((a, b) => (a.order ?? 50) - (b.order ?? 50));
     document.documentElement.dataset.state = panels.length ? "active" : "idle";
     const seen = new Set(), fresh = [];
@@ -203,6 +224,7 @@ window.atanor={ask:(text)=>call("ask",{text}),tool:(name,args)=>call("tool",{nam
   let speakIv = null, idleT = null;
   function speak(text) {
     clearInterval(speakIv); clearTimeout(idleT); voice.classList.remove("thinking"); orb.set("speak");
+    if (speakOn()) VOX.say(text);
     if (reduced) voice.textContent = text;
     else { let i = 0; voice.textContent = ""; speakIv = setInterval(() => { voice.textContent = text.slice(0, (i += 2)); if (i >= text.length) clearInterval(speakIv); }, 22); }
     idleT = setTimeout(() => orb.set("idle"), 1800 + text.length * 25);
@@ -232,11 +254,16 @@ window.atanor={ask:(text)=>call("ask",{text}),tool:(name,args)=>call("tool",{nam
   prompt.addEventListener("input", () => { autosize(); if (!say.classList.contains("busy")) orb.set(prompt.value ? "listen" : "idle"); });
   prompt.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); ime.flush(); if (!say.classList.contains("busy")) send(prompt.value); }
-    if (e.key === "Escape") api("/api/cancel", {});
+    if (e.key === "Escape") { api("/api/cancel", {}); VOX.stopSpeaking(); }
     if (e.key === "Tab") { e.preventDefault(); $("#log").hidden = !$("#log").hidden; }
   });
   $("#log-toggle").onclick = () => ($("#log").hidden = !$("#log").hidden);
   $("#log-clear").onclick = () => api("/api/history/clear", {});
+  $("#mic").onclick = () => VOX.listenOnce();
+  $("#orb-wrap").addEventListener("click", () => VOX.listenOnce());
+  document.addEventListener("keydown", (e) => {
+    if (e.ctrlKey && (e.code === "Space" || e.key === " ")) { e.preventDefault(); e.stopImmediatePropagation(); VOX.listenOnce(); }
+  }, true);
   document.addEventListener("keydown", (e) => { if (e.target !== prompt && !e.ctrlKey && !e.altKey && e.key.length === 1) prompt.focus(); });
 
   // ---------- 승인 · 알림 ----------
@@ -255,7 +282,7 @@ window.atanor={ask:(text)=>call("ask",{text}),tool:(name,args)=>call("tool",{nam
       else if (kind === "chat") { addMsg(data.role, data.text, data); if (data.role === "assistant") speak(data.text); }
       else if (kind === "thought") { addMsg("thought", data.text, { tool: data.tool !== "reply" ? data.tool : "" }); if (data.tool !== "reply") thinking(data.text); }
       else if (kind === "step") { addMsg("step", `${data.tool} → ${String(data.result).slice(0, 160)}`, { fail: !data.ok }); orb.kick(0.25); }
-      else if (kind === "busy") { if (data === "inner") { orb.set("listen"); } else setBusy(data); if (data === false) orb.set("idle"); }
+      else if (kind === "busy") { if (data === "inner") { orb.set("listen"); } else setBusy(data); if (data === false) { orb.set("idle"); if (voice.textContent === "생각하는 중") { voice.textContent = ""; voice.classList.remove("thinking"); } } }
       else if (kind === "inner") { addMsg("inner", data.text, { tool: data.tool !== "reply" ? data.tool : "" }); if (!say.classList.contains("busy")) murmur(data.text); }
       else if (kind === "inner_step") { addMsg("step", `${data.tool} → ${String(data.result).slice(0, 120)}`, { fail: !data.ok }); orb.kick(0.15); }
       else if (kind === "inner_done") { addMsg("inner", data.text); if (!say.classList.contains("busy")) murmur(data.text, true); }
@@ -275,6 +302,7 @@ window.atanor={ask:(text)=>call("ask",{text}),tool:(name,args)=>call("tool",{nam
     $("#s-brain").title = `${s.brain.model} @ ${s.brain.url}`;
     $("#s-mem").textContent = "기억 " + Object.values(s.memory.long_term || {}).reduce((a, b) => a + b, 0);
     (s.pending || []).forEach((p) => queue.push(p)); showConfirm(); connect();
+    setTimeout(() => api("/api/greet", {}), 1500);   // 하루 한 번 먼저 인사·브리핑
     setBrain(s.brain.alive);
     watchBrain();
   }

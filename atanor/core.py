@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from atanor import tools as T  # noqa: E402
 from atanor.brain import Brain  # noqa: E402
 from atanor.memory import Memory  # noqa: E402
+from atanor import voice as V  # noqa: E402
 
 HOME = os.path.expanduser("~/.atanor")
 SHELL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shell")
@@ -88,6 +89,8 @@ SYSTEM = """너는 ATANOR — 이 컴퓨터 자체인 AI 운영체제다. 주인
    강조색 바꿔 → ui.theme{accent:"warm"} | 글씨 원래대로·기본 크기 → ui.theme{scale:"1"}. 테마 얘기면 ui.theme, 눈부심·백라이트 얘기면 device.brightness.
    시계 → ui.panel{id:"clock", type:"clock", title:"시계"}. 할 일·메모처럼 주인이 말한 것을 담는 패널은 source:"user".
    패널 여러 개를 부탁받으면 패널마다 ui.panel을 따로 부른다.
+   목소리: 소리 내서 말하기 켜/꺼 → voice.set{speak} | 항상 듣기(부르면 대답) → voice.set{wake} | 여자/남자 목소리 → voice.set{voice}.
+   주인의 말이 음성 인식으로 들어오면(source voice) 답은 소리로 읽힌다: 짧게, 표·기호 없이 말하듯 답한다.
 13. 할 일은 todo.* 도구로 다룬다: 적어 줘 → todo.add{items}, 했어/지워 → todo.done, 목록 → todo.list.
    할 일 패널 → ui.panel{id:"todo", type:"todo", title:"할 일"} (data를 넣지 않는다 — 실제 목록이 그려진다).
    주인의 할 일·일정·메모 내용은 절대 지어내지 않는다. 주인이 말한 것만 todo.add한다.
@@ -278,9 +281,15 @@ class Core:
                 self.memory.log_event("user" if source == "user" else source, text)
             steps, final = [], None
             try:
-                msgs = self.build_messages(text, mode)
                 seen, gathered, stalls, echo_retry = {}, False, 0, False
-                limit = 5 if inner else MAX_STEPS
+                # 뻔한 말(시간, 음량, 타이머…)은 두뇌를 거치지 않고 바로 한다 — 1초 안에 답
+                qr = V.quick(self, text) if not inner and source in ("user", "voice", "api") else None
+                if qr:
+                    final, steps = qr
+                    limit = 0
+                else:
+                    msgs = self.build_messages(text, mode)
+                    limit = 5 if inner else MAX_STEPS
                 for step_i in range(limit):
                     if self.cancel_flag.is_set():
                         final = "중단했어요."
@@ -442,6 +451,14 @@ class Core:
                         if nowt - p.get("_last", 0) >= max(60, int(ref["seconds"])):
                             p["_last"] = nowt
                             self.ask_async(ref["prompt"] + f" (패널 '{p['id']}'를 갱신)", source="refresh")
+                cap, st = V._battery()   # 배터리가 바닥나기 전에 먼저 말한다
+                if cap is not None:
+                    low = cap <= 15 and st not in ("Charging", "Full")
+                    if low and not getattr(self, "_bat_warned", False):
+                        self._bat_warned = True
+                        self.add_history("assistant", f"배터리가 {cap}% 남았어요. 충전기를 꽂아 주세요.", source="alert")
+                    elif not low and cap > 20:
+                        self._bat_warned = False
                 hour = dt.datetime.now().hour
                 today = dt.date.today()
                 if (hour == int(self.cfg.get("consolidate_hour", 4)) and last_consolidate_day != today) or \
@@ -529,7 +546,42 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if not self._authed(parse_qs(u.query)):
             return self._send(401, {"error": "token required"})
+        if u.path == "/api/listen":   # 화면이 녹음한 날 PCM(16kHz, 16비트, 모노)
+            n = int(self.headers.get("Content-Length") or 0)
+            if n < 3200 or n > 16000 * 2 * 20:
+                self.rfile.read(n) if 0 < n <= 2_000_000 else None
+                return self._send(413, {"error": "audio size"})
+            pcm = self.rfile.read(n)
+            with open(os.path.join(HOME, "last_listen.pcm"), "wb") as f:   # 진단용: 마지막으로 들은 소리 하나만
+                f.write(pcm)
+            try:
+                text = V.stt(CORE, pcm)
+            except Exception as e:  # noqa: BLE001
+                return self._send(502, {"error": f"음성 인식 실패: {e}"})
+            woke, rest = V.strip_wake(text)
+            if (parse_qs(u.query).get("mode") or ["once"])[0] == "wake" and not woke:
+                return self._send(200, {"text": text, "heard": False})
+            if not rest:
+                return self._send(200, {"text": text, "wake": woke, "heard": False})
+            if CORE.busy:
+                return self._send(200, {"text": rest, "busy": True, "heard": False})
+            CORE.ask_async(rest, source="voice")
+            return self._send(200, {"text": rest, "heard": True})
         b = self._body()
+        if u.path == "/api/tts":
+            try:
+                return self._send(200, V.tts(CORE, str(b.get("text", ""))), "audio/mpeg")
+            except Exception as e:  # noqa: BLE001
+                return self._send(502, {"error": f"음성 합성 실패: {e}"})
+        if u.path == "/api/greet":   # 화면이 켜질 때: 하루 한 번, 먼저 말을 건다
+            today = dt.date.today().isoformat()
+            if CORE.cfg.get("greeted") == today or dt.datetime.now().hour < 5 or CORE.busy:
+                return self._send(200, {"greeted": False})
+            CORE.cfg["greeted"] = today
+            CORE._save_json("config.json", CORE.cfg)
+            text = V.briefing(CORE)
+            CORE.add_history("assistant", text, source="briefing")
+            return self._send(200, {"greeted": True, "text": text})
         if u.path == "/api/ask":
             if b.get("wait"):
                 return self._send(200, CORE.run_agent(b["text"], b.get("source", "api")))
@@ -581,6 +633,7 @@ def main():
     browser.start(CORE)
     desktop.start(CORE)
     eye.start(CORE)
+    V.warm(CORE)
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
     CORE.log("core_start", port=PORT)
