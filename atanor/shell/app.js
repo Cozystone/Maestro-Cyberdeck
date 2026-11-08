@@ -57,22 +57,34 @@
 
   // ---------- 해독: 새 패널의 글자는 노이즈에서 떠오른다 ----------
   const NOISE = "ㄱㄴㄷㄹㅁㅂㅅㅇㅈㅊㅋㅌㅍㅎアイウエオ0123456789";
+  const FINAL = new WeakMap();
   function decode(el) {
     if (reduced || !el) return;
     const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), nodes = []; let n;
-    while ((n = w.nextNode())) if (n.nodeValue.trim()) nodes.push([n, n.nodeValue]);
+    // 같은 글자에 해독 효과가 겹치면 두 번째가 '뒤섞인 글자'를 원문으로 착각한다 → 원문은 노드마다 한 번만 기억
+    while ((n = w.nextNode())) if (n.nodeValue.trim()) { if (!FINAL.has(n)) FINAL.set(n, n.nodeValue); nodes.push([n, FINAL.get(n)]); }
     let step = 0; const steps = 12; el.classList.add("decoding");
     const iv = setInterval(() => {
       step++;
       for (const [node, fin] of nodes) { const k = Math.floor(fin.length * (step / steps)); node.nodeValue = fin.slice(0, k) + [...fin.slice(k)].map((ch) => (/\s/.test(ch) ? ch : NOISE[(Math.random() * NOISE.length) | 0])).join(""); }
-      if (step >= steps) { clearInterval(iv); for (const [node, fin] of nodes) node.nodeValue = fin; el.classList.remove("decoding"); }
+      if (step >= steps) { clearInterval(iv); for (const [node, fin] of nodes) { node.nodeValue = fin; FINAL.delete(node); } el.classList.remove("decoding"); }
     }, 34);
   }
+
+  // 시계 패널은 1초마다 스스로 간다
+  setInterval(() => document.querySelectorAll(".clock").forEach((c) => {
+    const o = c.dataset.tz ? { timeZone: c.dataset.tz } : {}, n = new Date();
+    c.querySelector("b").textContent = n.toLocaleTimeString("ko-KR", { ...o, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+    c.querySelector("span").textContent = n.toLocaleDateString("ko-KR", { ...o, month: "long", day: "numeric", weekday: "long" });
+  }), 1000);
 
   // ---------- 패널 ----------
   function render(next) {
     ui = next || ui; const th = ui.theme || {};
     document.documentElement.dataset.mode = th.mode === "light" ? "light" : "dark";
+    const rs = document.documentElement.style, sc = Math.max(0.8, Math.min(1.6, +th.scale || 1));
+    if (rs.getPropertyValue("--ui-scale") !== String(sc)) { rs.setProperty("--ui-scale", sc); setTimeout(relayout, 60); }
+    if (/^#[0-9a-f]{6}$/i.test(th.accent || "")) rs.setProperty("--accent", th.accent); else rs.removeProperty("--accent");
     const panels = Object.values(ui.panels || {}).sort((a, b) => (a.order ?? 50) - (b.order ?? 50));
     document.documentElement.dataset.state = panels.length ? "active" : "idle";
     const seen = new Set(), fresh = [];
@@ -117,7 +129,7 @@
       }
       return `<ul>${res.map((i) => `<li>${esc(typeof i === "object" ? i.content || i.text || i["이름"] || JSON.stringify(i) : i)}</li>`).join("")}</ul>`;
     }
-    if (res && typeof res === "object") return `<dl class="kv">${Object.entries(res).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(typeof v === "object" ? JSON.stringify(v) : v)}</dd>`).join("")}</dl>`;
+    if (res && typeof res === "object") return `<dl class="kv">${Object.entries(res).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${Array.isArray(v) ? v.map((x) => esc(typeof x === "object" ? JSON.stringify(x) : x)).join("<br>") : esc(typeof v === "object" ? JSON.stringify(v) : v)}</dd>`).join("")}</dl>`;
     return esc(res);
   }
 
@@ -159,6 +171,7 @@ window.atanor={ask:(text)=>call("ask",{text}),tool:(name,args)=>call("tool",{nam
   function body(p) {
     const d = p.data || {};
     switch (p.type) {
+      case "clock": return `<div class="clock" data-tz="${esc(d.tz || "")}"><b></b><span></span>${d.label ? `<small>${esc(d.label)}</small>` : ""}</div>`;
       case "text": return `<div class="text">${md(d.text || "")}</div>`;
       case "list": return `<ul>${(d.items || []).map((i) => `<li>${md(i)}</li>`).join("")}</ul>`;
       case "kv": return `<dl class="kv">${Object.entries(d.pairs || d).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(typeof v === "object" ? JSON.stringify(v) : v)}</dd>`).join("")}</dl>`;
@@ -176,6 +189,9 @@ window.atanor={ask:(text)=>call("ask",{text}),tool:(name,args)=>call("tool",{nam
       case "app": api(`/api/app?name=${encodeURIComponent(d.name || p.id)}`).then((r) => { const box = stage.querySelector(`[data-id="${CSS.escape(p.id)}"] .body`); if (!box) return;
         const f = document.createElement("iframe"); f.setAttribute("sandbox", "allow-scripts allow-forms"); f.className = "appframe"; f.srcdoc = APP_BRIDGE + r.html; box.innerHTML = ""; box.appendChild(f); relayoutSoon(); }); return "불러오는 중";
       case "status": return lastStatus ? statusHTML(lastStatus) : "읽는 중";
+      case "todo": api("/api/tool", { name: "todo.list", args: {}, source: "ui" }).then((r) => { const t = Array.isArray(r.result) ? r.result : [];
+        fill(p.id, t.length ? `<ul class="todo">${t.map((x) => `<li class="${x.done ? "done" : ""}" data-todo="${esc(x.id)}">${esc(x.text)}</li>`).join("")}</ul>` : `<span class="dim">할 일이 없습니다. "우유 사기 적어줘"처럼 말해 보세요.</span>`);
+        stage.querySelectorAll(`[data-id="${CSS.escape(p.id)}"] [data-todo]`).forEach((li) => (li.onclick = () => api("/api/tool", { name: "todo.done", args: { which: li.dataset.todo }, source: "ui" }))); }); return "읽는 중";
       case "windows": api("/api/tool", { name: "window.list", args: {}, source: "ui" }).then((r) => fill(p.id, (Array.isArray(r.result) ? r.result : []).map((w) => `<div class="win"><span class="app">${esc(w.app || "?")}</span><span>${esc(w.title || "")}</span><span class="ws">${esc(w.workspace || "")}</span></div>`).join("") || "열린 창이 없습니다")); return "읽는 중";
       case "memory": api("/api/memory").then((rows) => fill(p.id, rows.slice(0, 20).map((m) => `<div class="mem">${esc(m.content)}<small>${m.kind} ${Math.round(m.retention * 100)}%</small></div>`).join("") || "아직 기억이 없습니다")); return "읽는 중";
       default: return `<pre>${esc(JSON.stringify(d, null, 1))}</pre>`;
@@ -228,7 +244,7 @@ window.atanor={ask:(text)=>call("ask",{text}),tool:(name,args)=>call("tool",{nam
   function showConfirm() { const c = queue[0]; $("#confirm").hidden = !c; if (c) { $("#confirm-desc").textContent = `${c.source}: ${c.desc}`; orb.set("alert"); } }
   $("#confirm-yes").onclick = () => { const c = queue.shift(); api("/api/confirm", { id: c.id, approve: true }); showConfirm(); };
   $("#confirm-no").onclick = () => { const c = queue.shift(); api("/api/confirm", { id: c.id, approve: false }); showConfirm(); };
-  function toast(title, body, alert) { const el = document.createElement("div"); el.className = "toast" + (alert ? " alert" : ""); el.innerHTML = `<b>${esc(title)}</b><span>${esc(body || "")}</span>`; $("#toasts").appendChild(el); setTimeout(() => el.remove(), 8000); if (alert) orb.set("alert"); }
+  function toast(title, body, alert, sticky) { const el = document.createElement("div"); el.className = "toast" + (alert ? " alert" : "") + (sticky ? " sticky" : ""); el.innerHTML = `<b>${esc(title)}</b><span>${esc(body || "")}</span>` + (sticky ? `<small>눌러서 닫기</small>` : ""); $("#toasts").appendChild(el); if (sticky) { el.onclick = () => el.remove(); speak(body || title); } else setTimeout(() => el.remove(), 8000); if (alert) orb.set("alert"); }
 
   // ---------- 실시간 ----------
   function connect() {
@@ -245,7 +261,7 @@ window.atanor={ask:(text)=>call("ask",{text}),tool:(name,args)=>call("tool",{nam
       else if (kind === "inner_done") { addMsg("inner", data.text); if (!say.classList.contains("busy")) murmur(data.text, true); }
       else if (kind === "confirm") { queue.push(data); showConfirm(); }
       else if (kind === "confirm_done") { const i = queue.findIndex((q) => q.id === data.id); if (i >= 0) queue.splice(i, 1); showConfirm(); }
-      else if (kind === "notify") toast(data.title, data.body, /Sentinel|위협|승인/.test(data.title));
+      else if (kind === "notify") toast(data.title, data.body, /Sentinel|위협|승인/.test(data.title), data.sticky);
       else if (kind === "memory") $("#s-mem").textContent = "기억 " + Object.values(data.long_term || {}).reduce((a, b) => a + b, 0);
       else if (kind === "history_clear") msgs.innerHTML = "";
     };

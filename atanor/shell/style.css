@@ -117,6 +117,7 @@ iframe.appframe { width: 100%; height: 360px; border: 0; background: transparent
 #toasts { position: fixed; z-index: 35; top: 48px; right: 28px; display: flex; flex-direction: column; gap: 8px; }
 .toast { width: 330px; padding: 10px 14px; border-left: 1px solid var(--cyan); background: var(--veil); backdrop-filter: blur(10px); font-size: 13px; }
 .toast.alert { border-color: var(--amber); } .toast b { display: block; color: var(--bright); font-weight: 500; } .toast span { color: var(--dim); }
+.toast.sticky { border-color: var(--violet); cursor: pointer; font-size: 15px; } .toast.sticky span { color: var(--text); } .toast small { display: block; margin-top: 4px; color: var(--faint); font-size: 11px; }
 /* 오프라인: 두뇌가 없으면 세계가 코드로 돌아간다 */
 #offline { position: fixed; inset: 0; z-index: 60; background: #000; opacity: 0; transition: opacity 1.6s ease; }
 #offline.on { opacity: 1; }
@@ -126,3 +127,14 @@ iframe.appframe { width: 100%; height: 360px; border: 0; background: transparent
 #offline-note b { display: block; font-weight: 400; font-size: 15px; color: rgba(200, 255, 210, .9); letter-spacing: .04em; }
 ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-thumb { background: var(--line); }
 @media (prefers-reduced-motion: reduce) { :root { --move: 0s; } #rain { display: none; } }
+
+/* 주인이 고르는 크기·강조색 */
+/* zoom은 패널 '안쪽'에만 — 패널 자체에 걸면 배치 좌표(transform)까지 커져 자리가 어긋난다 */
+.panel > h3, .panel > .body, #say > *, .toast > * { zoom: var(--ui-scale, 1); }
+#voice { font-size: calc(15.5px * var(--ui-scale, 1)); }
+.panel h3 { border-color: var(--accent, var(--line)); }
+.panel .x:hover, .clock b { color: var(--accent, var(--cyan)); }
+.clock { display: flex; flex-direction: column; gap: 2px; padding: 4px 2px; }
+.clock b { font: 300 44px/1 var(--mono); letter-spacing: .02em; font-variant-numeric: tabular-nums; }
+.clock span { color: var(--dim); font-size: 14px; } .clock small { color: var(--faint); font-size: 12px; }
+.todo li { cursor: pointer; } .todo li.done { color: var(--faint); text-decoration: line-through; } .dim { color: var(--dim); }

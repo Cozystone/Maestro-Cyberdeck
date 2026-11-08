@@ -8,10 +8,12 @@ browser.click / browser.type 은 그 번호로 대상을 고른다. (Claude in C
 import base64
 import json
 import os
+import re
 import socket
 import struct
 import subprocess
 import time
+import urllib.parse
 import urllib.request
 
 PORT = 9222
@@ -140,7 +142,8 @@ def ensure_browser(env, url="about:blank"):
     e["__EGL_VENDOR_LIBRARY_FILENAMES"] = "/usr/share/glvnd/egl_vendor.d/50_mesa.json"
     subprocess.Popen(["chromium", "--ozone-platform=wayland", "--enable-wayland-ime", f"--remote-debugging-port={PORT}",
                       "--remote-debugging-address=127.0.0.1", f"--user-data-dir={PROFILE}", "--no-first-run",
-                      "--render-node-override=/dev/dri/renderD128", "--disable-features=Vulkan", "--lang=ko", url],
+                      "--render-node-override=/dev/dri/renderD128", "--disable-features=Vulkan", "--lang=ko",
+                      "--autoplay-policy=no-user-gesture-required", "--hide-crash-restore-bubble", url],
                      env=e, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     for _ in range(40):
         time.sleep(0.25)
@@ -192,7 +195,8 @@ def wait_load(ws, timeout=10):
 def start(core):
     from atanor import tools as T
 
-    @T.tool("browser.open", "조작 가능한 브라우저(작업 공간 2)로 주소를 연다. 이후 browser.read로 페이지를 본다.",
+    @T.tool("browser.open", "조작 가능한 브라우저(작업 공간 2)로 주소를 연다. 이후 browser.read로 페이지를 본다. "
+            "음악·영상을 '틀어 달라'는 요청에는 쓰지 말고 media.play를 쓴다.",
             {"url": {"type": "string"}}, risk="write", required=["url"])
     def browser_open(a, ctx):
         env = T.need_gui(ctx)
@@ -207,7 +211,12 @@ def start(core):
             wait_load(ws, 15)
         finally:
             ws.close()
-        return read()
+        out = read()
+        if re.search(r"youtube\.com/results", url):
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("search_query", [""])[0]
+            out += (f"\n\n[ATANOR 알림] 아직 아무것도 재생되지 않았다(검색 결과만 열림). 틀어 달라는 요청이면 "
+                    f"media.play{{query:'{q}'}}를 불러라.")
+        return out
 
     @T.tool("browser.read", "지금 브라우저 페이지를 글자로 본다: 제목, 주소, 본문, 누를 수 있는 요소 [번호] 목록.")
     def browser_read(a, ctx):
@@ -255,6 +264,66 @@ def start(core):
         finally:
             ws.close()
         return read()
+
+    @T.tool("browser.close", "조작용 브라우저를 닫는다(화면은 ATANOR로 돌아온다).", risk="write")
+    def browser_close(a, ctx):
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/json/version", timeout=3) as r:
+                url = json.loads(r.read())["webSocketDebuggerUrl"]
+        except OSError:
+            return "브라우저가 이미 닫혀 있다."
+        ws = WS(url)
+        try:
+            ws.call("Browser.close")
+        except Exception:  # noqa: BLE001  닫히면서 연결이 끊기는 것은 정상
+            pass
+        finally:
+            try:
+                ws.close()
+            except Exception:  # noqa: BLE001
+                pass
+        return "브라우저를 닫았다."
+
+    @T.tool("media.play", "음악·영상을 바로 튼다: 유튜브에서 query를 찾아 첫 영상을 브라우저에서 재생한다. "
+            "'○○ 틀어줘/들려줘'에 쓴다. 멈춤·다시 재생은 action: pause|resume.",
+            {"query": {"type": "string"}, "action": {"type": "string"}}, risk="write")
+    def media_play(a, ctx):
+        act = a.get("action") or "play"
+        if act in ("pause", "resume", "stop"):
+            ws = page()
+            try:
+                evaluate(ws, "(() => { const v = document.querySelector('video'); if (!v) return false; "
+                             + ("v.play()" if act == "resume" else "v.pause()") + "; return true; })()")
+            finally:
+                ws.close()
+            return "멈춤" if act != "resume" else "다시 재생"
+        q = (a.get("query") or "").strip()
+        if not q:
+            raise ValueError("query가 필요하다.")
+        req = urllib.request.Request("https://www.youtube.com/results?search_query=" + urllib.parse.quote(q),
+                                     headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "ko,en"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            raw = r.read().decode("utf-8", "replace")
+        ids = list(dict.fromkeys(re.findall(r'"videoId":"([\w-]{11})"', raw)))
+        if not ids:
+            return f"유튜브에서 '{q}' 영상을 찾지 못했다."
+        browser_open({"url": f"https://www.youtube.com/watch?v={ids[0]}"}, ctx)
+        ws = page()
+        try:
+            state = None
+            for _ in range(20):
+                state = evaluate(ws, "(() => { const v = document.querySelector('video'); if (!v) return null; "
+                                     "if (v.paused) v.play().catch(()=>{}); return {paused: v.paused, t: v.currentTime, "
+                                     "title: document.title}; })()")
+                if state and not state["paused"] and state["t"] > 0:
+                    break
+                time.sleep(0.5)
+        finally:
+            ws.close()
+        if not state:
+            return "영상 페이지를 열었지만 재생기를 찾지 못했다."
+        title = (state.get("title") or "").replace(" - YouTube", "")
+        return f"재생 중: {title}" if not state["paused"] else f"열었지만 아직 재생되지 않았다: {title}"
 
     @T.tool("browser.back", "뒤로 가기.", risk="write")
     def browser_back(a, ctx):

@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import base64
 import time
+import uuid
 import urllib.request
 
 TOOLS = {}
@@ -248,12 +249,16 @@ def app_open(a, ctx):
     cmd = apps[a["app"]]["exec"] if a["app"] in apps else a["app"]
     exe = cmd.split()[0] if cmd.split() else ""
     if exe and not shutil.which(exe):
-        alias = {"google-chrome": "chromium", "google-chrome-stable": "chromium", "chrome": "chromium",
-                 "firefox": "chromium", "nautilus": "pcmanfm", "files": "pcmanfm", "terminal": "foot"}
-        if exe.lower() in alias and shutil.which(alias[exe.lower()]):
-            cmd = alias[exe.lower()] + cmd[len(exe):]
+        e = exe.lower()
+        kind = ("chromium" if any(k in e for k in ("chrome", "firefox", "browser", "브라우저", "edge", "웹")) else
+                "foot" if any(k in e for k in ("term", "konsole", "console", "터미널", "shell", "xterm", "kitty", "alacritty")) else
+                "pcmanfm" if any(k in e for k in ("nautilus", "files", "dolphin", "thunar", "nemo", "파일", "explorer", "finder")) else
+                "mousepad" if any(k in e for k in ("gedit", "kate", "notepad", "editor", "메모장", "편집기", "text")) else None)
+        if kind and shutil.which(kind):
+            cmd = kind + cmd[len(exe):]
         else:
-            raise RuntimeError(f"'{exe}' 프로그램이 설치돼 있지 않다. app.list로 설치된 앱을 확인해라.")
+            raise RuntimeError(f"'{exe}' 프로그램이 설치돼 있지 않다. 설치된 앱(app.open에 그대로 쓸 수 있는 id): "
+                               + ", ".join(sorted(_desktop_apps())))
     before = {w["id"] for w in _windows(json.loads(swaymsg(ctx, "-t", "get_tree")), [])}
     swaymsg(ctx, "workspace", "2")
     # sway가 직접 띄운다 → 앱은 세션에 속해, Core가 다시 시작돼도 살아남는다.
@@ -284,6 +289,29 @@ def _windows(tree, out, ws=None):
 @tool("window.list", "열린 창 목록(id, 앱, 제목, 작업 공간, 포커스).")
 def window_list(a, ctx):
     return _windows(json.loads(swaymsg(ctx, "-t", "get_tree")), [])
+
+
+@tool("app.close", "앱 창을 닫는다. app: 앱 이름이나 창 제목 일부(예: 'foot', '터미널', 'chromium', '브라우저'). "
+      "'*'이면 ATANOR 화면을 뺀 모든 앱 창. 다 닫히면 화면이 ATANOR로 돌아온다.", {"app": {"type": "string"}},
+      risk="write", required=["app"])
+def app_close(a, ctx):
+    q = (a.get("app") or "").strip().lower()
+    if q not in ("*", "all", "전부", "모두"):
+        q = ("chromium" if any(k in q for k in ("chrom", "크롬", "firefox", "browser", "브라우저", "웹")) else
+             "foot" if any(k in q for k in ("term", "터미널", "konsole", "console", "shell", "xterm")) else
+             "pcmanfm" if any(k in q for k in ("nautilus", "files", "파일", "thunar", "dolphin")) else q)
+    wins = [w for w in _windows(json.loads(swaymsg(ctx, "-t", "get_tree")), []) if w["app"] != "atanor"]
+    hit = wins if q in ("*", "all", "전부", "모두") else [
+        w for w in wins if q in (w.get("app") or "").lower() or q in (w.get("title") or "").lower()]
+    if not hit:
+        return f"'{a.get('app')}'에 맞는 창이 없다. 열린 앱 창: " + (", ".join(f"{w['app']}({w['title']})" for w in wins) or "없음")
+    for w in hit:
+        swaymsg(ctx, f"[con_id={w['id']}] kill")
+    time.sleep(0.6)
+    left = [w for w in _windows(json.loads(swaymsg(ctx, "-t", "get_tree")), []) if w["app"] != "atanor"]
+    if not [w for w in left if w["workspace"] != "1"]:
+        swaymsg(ctx, "workspace", "1")
+    return f"닫음: " + ", ".join(f"{w['app']}({(w['title'] or '')[:40]})" for w in hit)
 
 
 @tool("window.control", "창을 조작한다. action: focus|close|fullscreen|float|move_to_workspace|resize. "
@@ -441,12 +469,68 @@ def web_search(a, ctx):
 
 import urllib.parse  # noqa: E402
 
+WMO = {0: "맑음", 1: "대체로 맑음", 2: "구름 조금", 3: "흐림", 45: "안개", 48: "안개(서리)", 51: "약한 이슬비", 53: "이슬비",
+       55: "강한 이슬비", 61: "약한 비", 63: "비", 65: "강한 비", 66: "어는 비", 67: "강한 어는 비", 71: "약한 눈", 73: "눈",
+       75: "강한 눈", 77: "싸락눈", 80: "약한 소나기", 81: "소나기", 82: "강한 소나기", 85: "약한 눈 소나기", 86: "눈 소나기",
+       95: "뇌우", 96: "우박 뇌우", 99: "강한 우박 뇌우"}
+
+
+_GEO = {}   # 장소 이름 → 지오코딩 결과(같은 곳을 매번 다시 찾지 않는다)
+
+
+def _json_get(url):
+    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "ATANOR"}), timeout=20) as r:
+        return json.loads(r.read())
+
+
+@tool("weather.get", "날씨(지금·오늘·며칠 예보). place: 도시 이름(한글 가능, 기본 '서울'), days: 예보 일수(1~7). "
+      "날씨는 웹을 뒤지지 말고 이걸 쓴다.", {"place": {"type": "string"}, "days": {"type": "integer"}})
+def weather_get(a, ctx):
+    place = (a.get("place") or (ctx.cfg.get("home_city") if ctx else None) or "서울").strip()
+    # 지오코딩은 한글 짧은 이름(서울)을 못 찾고 정식 이름(서울특별시)은 찾는다 → 후보를 차례로 시도
+    base = re.sub(r"(특별자치시|특별자치도|특별시|광역시|시|군|구|도)$", "", place.replace(" ", "")) or place
+    cands = [place, base + "특별시", base + "광역시", base + "시", base + "군", base + "구", base + "특별자치시", base + "특별자치도", base]
+    if place in _GEO:
+        cands = []
+    found = dict(_GEO.get(place) or {})
+    for c in dict.fromkeys(cands):
+        if any((r.get("population") or 0) >= 50000 for r in found.values()):
+            break                        # 충분히 큰 곳을 이미 찾았다 — 나머지 후보는 묻지 않는다
+        g = _json_get("https://geocoding-api.open-meteo.com/v1/search?count=5&language=ko&name=" + urllib.parse.quote(c))
+        for r in g.get("results") or []:
+            nm = (r.get("name") or "").replace(" ", "")
+            # 이름이 정확히 맞는 것만(앞부분만 같은 '강남구렁고개' 같은 것은 버린다). 영어 이름은 그대로 믿는다.
+            if nm in cands or not re.search(r"[가-힣]", place):
+                found[r["id"]] = r
+    # 같은 이름이 여러 곳이면 사람이 가장 많이 사는 곳(보통 주인이 말한 곳)
+    if found:
+        _GEO[place] = found
+    loc = max(found.values(), key=lambda r: (r.get("population") or 0, r.get("feature_code") in ("PPLC", "PPLA")),
+              default=None)
+    if not loc:
+        return f"'{place}'의 위치를 찾지 못했다. 영어 이름(예: Busan)으로 다시 시도해라."
+    days = max(1, min(7, int(a.get("days") or 1)))
+    w = _json_get("https://api.open-meteo.com/v1/forecast?timezone=auto"
+                  f"&latitude={loc['latitude']}&longitude={loc['longitude']}&forecast_days={days}"
+                  "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,precipitation"
+                  "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max")
+    c, d = w["current"], w["daily"]
+    out = {"장소": ", ".join(x for x in (loc.get("name"), loc.get("admin1"), loc.get("country")) if x),
+           "지금": f"{WMO.get(c['weather_code'], c['weather_code'])}, {c['temperature_2m']}°C (체감 {c['apparent_temperature']}°C), "
+                 f"습도 {c['relative_humidity_2m']}%, 바람 {c['wind_speed_10m']} km/h",
+           "측정 시각": c["time"].replace("T", " ")}
+    out["예보"] = [f"{d['time'][i]}: {WMO.get(d['weather_code'][i], d['weather_code'][i])}, "
+                 f"{d['temperature_2m_min'][i]}~{d['temperature_2m_max'][i]}°C, 비 올 확률 {d['precipitation_probability_max'][i]}%"
+                 for i in range(len(d["time"]))]
+    out["출처"] = "Open-Meteo"
+    return out
+
 
 # ───────────────────────── 기기 ─────────────────────────
 @tool("device.volume", "음량을 조절한다. level: 0~100 또는 '+10', '-10', 'mute', 'unmute'.",
       {"level": {"type": "string"}}, risk="write", required=["level"])
 def device_volume(a, ctx):
-    lv = str(a["level"]).strip()
+    lv = str(a["level"]).strip().replace("%", "").replace(" ", "") or "0"
     env = wl_env(ctx) or None
     if lv in ("mute", "unmute"):
         run(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1" if lv == "mute" else "0"], env=env)
@@ -457,23 +541,81 @@ def device_volume(a, ctx):
     return run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], env=env)[1]
 
 
-@tool("device.brightness", "화면 밝기. level: '50%', '+10%', '10%-'.", {"level": {"type": "string"}},
+@tool("device.brightness", "화면 밝기(백라이트). level: '50%'(그 값으로), '+10%'(밝게), '-10%'(어둡게). "
+      "주의: '화면을 어둡게/밝게'가 테마(색)를 말하는지 밝기를 말하는지 문맥으로 가린다.", {"level": {"type": "string"}},
       risk="write", required=["level"])
 def device_brightness(a, ctx):
-    code, out, err = run(["sudo", "-n", "brightnessctl", "set", a["level"]])
-    return out or err
+    lv = str(a["level"]).strip().replace(" ", "")
+    m = re.fullmatch(r"([+-]?)(\d+)%?([+-]?)", lv)
+    if not m:
+        raise ValueError("level은 '40%', '+10%', '-10%' 꼴")
+    sign = m.group(1) or m.group(3)
+    arg = {"+": f"+{m.group(2)}%", "-": f"{m.group(2)}%-"}.get(sign, f"{m.group(2)}%")
+    code, out, err = run(["sudo", "-n", "brightnessctl", "set", arg])
+    if code != 0:
+        return f"실패: {err or out}"
+    _, cur, _ = run(["brightnessctl", "-m"])
+    parts = cur.strip().split(",")
+    return f"밝기 {parts[3] if len(parts) > 3 else cur.strip()}"
 
 
-@tool("notify", "화면 오른쪽 위에 알림을 띄운다.", {"title": {"type": "string"}, "body": {"type": "string"}},
-      risk="write", required=["title"])
+@tool("device.network", "네트워크 상태: 와이파이 이름(SSID)·신호·주소·인터넷 연결 여부. 비밀번호는 보여주지 않는다.")
+def device_network(a, ctx):
+    info = {}
+    _, st, _ = run(["sudo", "-n", "wpa_cli", "-i", "wlo1", "status"])
+    kv = dict(l.split("=", 1) for l in st.splitlines() if "=" in l)
+    info["와이파이"] = (f"연결됨: {kv.get('ssid')} ({int(kv['freq']) / 1000:.1f} GHz)" if kv.get("wpa_state") == "COMPLETED"
+                    else f"연결 안 됨 ({kv.get('wpa_state', '알 수 없음')})")
+    try:
+        with open("/proc/net/wireless") as f:
+            ln = [l for l in f if ":" in l]
+        if ln:
+            dbm = float(ln[0].split()[3].rstrip("."))
+            info["신호"] = f"{dbm:.0f} dBm (" + ("아주 좋음" if dbm > -55 else "좋음" if dbm > -67 else "보통" if dbm > -75 else "약함") + ")"
+    except (OSError, ValueError, IndexError):
+        pass
+    _, ip, _ = run(["bash", "-c", "ip -4 -br a | grep -v '^lo' | awk '{print $1\": \"$3}'"])
+    info["주소"] = ip.strip()
+    code, out, _ = run(["ping", "-c", "1", "-W", "2", "1.1.1.1"])
+    info["인터넷"] = "연결됨 (" + out.split("time=")[1].split()[0] + " ms)" if code == 0 and "time=" in out else "안 됨"
+    return info
+
+
+@tool("notify", "지금 즉시 화면에 알림을 띄운다(나중에 알려 달라는 것은 reminder.add).",
+      {"title": {"type": "string"}, "body": {"type": "string"}}, risk="write")
 def notify(a, ctx):
-    ctx.emit("notify", {"title": a["title"], "body": a.get("body", "")})
+    title = a.get("title") or a.get("text") or "알림"
+    body = a.get("body") or (a.get("text") if a.get("title") else "")
+    when = re.search(r"(\d+)\s*(분|시간)\s*(뒤|후)", f"{title} {body}")
+    if when:   # '5분 후에 …' 같은 알림을 지금 띄우면 거짓 알림이 된다 → 예약으로 돌린다
+        mins = int(when.group(1)) * (60 if when.group(2) == "시간" else 1)
+        it = ctx.scheduler_add({"in_minutes": mins, "remind": re.sub(r"\d+\s*(분|시간)\s*(뒤|후)에?\s*", "", body or title).strip() or title})
+        return f"지금 띄우지 않고 예약함 #{it['id']}: {it['label']}에 알림 '{it['remind']}'"
+    ctx.emit("notify", {"title": title, "body": body})
     return "알림 표시"
+
+
+@tool("reminder.add", "주인에게 나중에 알려 줄 알림을 맞춘다. '5분 뒤에 …라고 알려줘', '내일 9시에 회의 알려줘', '30분 타이머'. "
+      "text: 알림에 띄울 말, in_minutes: 몇 분 뒤, at: 'HH:MM' | '내일 09:00' | 'YYYY-MM-DD HH:MM'.",
+      {"text": {"type": "string"}, "in_minutes": {"type": "number"}, "at": {"type": "string"}}, risk="write", required=["text"])
+def reminder_add(a, ctx):
+    if not (a.get("in_minutes") or a.get("at")):
+        raise ValueError("in_minutes(몇 분 뒤)나 at(시각) 중 하나가 필요하다.")
+    it = ctx.scheduler_add({"in_minutes": a.get("in_minutes"), "at": a.get("at"), "remind": a["text"]})
+    return f"알림 예약 #{it['id']}: {it['label']}에 '{it['remind']}'"
 
 
 # ───────────────────────── 화면 UI (AI가 조립) ─────────────────────────
 PANEL_TYPES = ("live", "text", "list", "kv", "meter", "table", "buttons", "image", "html", "status", "windows", "memory",
-               "chart", "steps", "form", "log", "gallery", "app")
+               "chart", "steps", "form", "log", "gallery", "app", "clock", "todo")
+
+
+def _show_atanor(ctx):
+    """화면을 바꿨으면 주인이 보도록 ATANOR 화면(작업 공간 1)을 앞으로 가져온다."""
+    try:
+        swaymsg(ctx, "workspace", "1")
+    except Exception:  # noqa: BLE001  화면 없는 시험 환경
+        pass
 
 
 @tool("ui.panel", "ATANOR 화면에 패널을 만들거나 바꾼다(같은 id면 교체). "
@@ -483,7 +625,7 @@ PANEL_TYPES = ("live", "text", "list", "kv", "meter", "table", "buttons", "image
       "table{columns[], rows[[]]} | buttons{buttons[{label, prompt}] — 누르면 prompt가 비서에게 전달} | "
       "chart{kind: line|bar, labels[], series[{name, values[]}]} | steps{steps[{text, state: done|doing|todo}]} | "
       "form{fields[{name, label, type: text|number|date}], submit, prompt — 제출하면 prompt의 {name}을 값으로 바꿔 비서에게 보냄} | "
-      "log{lines[]} | gallery{images[]} | image{src} | html{html — 격리된 상자에서 자유롭게} | "
+      "log{lines[]} | gallery{images[]} | image{src} | html{html — 격리된 상자에서 자유롭게} | clock{tz(선택), label} | todo(주인의 실제 할 일 목록 — data 없음, todo.add로 채움) | "
       "app{name — ui.app으로 만든 미니 앱} | status(실시간 기기 상태) | windows(열린 창) | memory(기억 현황). "
       "source: 'user'면 주인이 말해 준 내용만 담은 패널(근거 검사 생략). "
       "order: 숫자(작을수록 먼저 배치), x/y/w: 배치가 free일 때 화면 비율(%) 위치와 너비, "
@@ -492,8 +634,24 @@ PANEL_TYPES = ("live", "text", "list", "kv", "meter", "table", "buttons", "image
        "data": {"type": "object"}, "order": {"type": "integer"},
        "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "source": {"type": "string"},
        "refresh": {"type": "object", "description": "{seconds, prompt}"}},
-      risk="write", required=["id", "type"])
+      risk="write")
 def ui_panel(a, ctx):
+    many = a.get("panels")
+    if isinstance(many, dict):
+        many = list(many.values())
+    if many is None and not a.get("type") and a and all(isinstance(v, dict) and v.get("type") for v in a.values()):
+        many = list(a.values())          # {"clock": {...}, "todo": {...}} 꼴
+    if isinstance(many, list):
+        return [ui_panel(dict(p), ctx) for p in many if isinstance(p, dict)]
+    if not a.get("id") or not a.get("type"):
+        raise ValueError("id와 type이 필요하다.")
+    if a["type"] == "todo":
+        a["data"] = {"v": time.time()}   # 할 일 패널의 내용은 언제나 실제 할 일 목록(todo.*)에서 온다
+    if a["type"] in ("todo", "status", "windows", "memory"):   # 한 화면에 하나면 충분한 패널 → 같은 종류는 교체
+        for pid, p in list(ctx.ui_state["panels"].items()):
+            if p.get("type") == a["type"] and pid != a["id"]:
+                ctx.ui_state["panels"].pop(pid)
+    _show_atanor(ctx)
     if a["type"] not in PANEL_TYPES:
         return f"type은 {PANEL_TYPES} 중 하나"
     if a["type"] == "live":
@@ -517,7 +675,8 @@ def ui_panel(a, ctx):
     ctx.ui_state["panels"][a["id"]] = {k: a.get(k) for k in ("id", "title", "type", "data", "order", "x", "y", "w", "refresh")}
     ctx.save_ui()
     ctx.emit("ui", ctx.ui_state)
-    return f"패널 '{a['id']}' 표시"
+    now = ", ".join(f"{k}({v.get('type')})" for k, v in ctx.ui_state["panels"].items())
+    return f"패널 '{a['id']}'({a['type']}) 표시. 지금 화면의 패널: {now}"
 
 
 APPS_DIR = os.path.expanduser("~/.atanor/apps")
@@ -574,20 +733,104 @@ def ui_layout(a, ctx):
     ctx.ui_state["theme"]["layout_seed"] = a.get("seed")
     ctx.save_ui()
     ctx.emit("ui", ctx.ui_state)
+    _show_atanor(ctx)
     return f"배치: {a['layout']}"
 
 
-@tool("ui.theme", "화면 테마. mode: dark|light.", {"mode": {"type": "string"}}, risk="write")
+@tool("ui.theme", "화면 테마. mode: dark|light | scale: 글자·패널 크기 배율(0.8~1.6, 기본 1; '+0.2'처럼 상대값도) | "
+      "accent: 강조색(#rrggbb 또는 cyan|violet|rose|amber|green|warm). 주인이 말한 항목만 넣고 나머지는 비운다.",
+      {"mode": {"type": "string"}, "scale": {"type": "string"}, "accent": {"type": "string"}}, risk="write")
 def ui_theme(a, ctx):
-    ctx.ui_state["theme"].update({k: v for k, v in a.items() if v})
+    th = ctx.ui_state["theme"]
+    done = []
+    if a.get("mode") in ("dark", "light"):
+        th["mode"] = a["mode"]
+        done.append(f"모드 {a['mode']}")
+    if a.get("scale") not in (None, ""):
+        v = str(a["scale"]).strip()
+        cur = float(th.get("scale") or 1)
+        new = cur + float(v) if v[0] in "+-" else float(v)
+        th["scale"] = round(max(0.8, min(1.6, new)), 2)
+        done.append(f"크기 {th['scale']}배")
+    if a.get("accent"):
+        named = {"cyan": "#20f4ff", "violet": "#bd6dff", "purple": "#bd6dff", "rose": "#ff4f9d", "pink": "#ff4f9d",
+                 "amber": "#ffb43d", "orange": "#ffb43d", "warm": "#ff9a5a", "green": "#4dffb0", "blue": "#4d9bff",
+                 "red": "#ff5a5a", "white": "#f1fbff"}
+        c = named.get(a["accent"].lower(), a["accent"])
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", c):
+            raise ValueError("accent는 #rrggbb나 이름(cyan|violet|rose|amber|green|blue|red|warm)")
+        th["accent"] = c
+        done.append(f"강조색 {c}")
+    if not done:
+        return "바꿀 것이 없다(mode/scale/accent)."
     ctx.save_ui()
     ctx.emit("ui", ctx.ui_state)
-    return "테마 적용"
+    _show_atanor(ctx)
+    return "테마: " + ", ".join(done)
 
 
 @tool("ui.get", "지금 화면 구성(패널, 테마)을 본다.")
 def ui_get(a, ctx):
     return ctx.ui_state
+
+
+# ───────────────────────── 할 일 ─────────────────────────
+TODO_FILE = os.path.expanduser("~/.atanor/todo.json")
+
+
+def _todos():
+    try:
+        with open(TODO_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return []
+
+
+def _save_todos(items, ctx):
+    with open(TODO_FILE, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=1)
+    if ctx:   # 할 일 패널이 떠 있으면 다시 그리게 한다
+        bumped = False
+        for p in ctx.ui_state["panels"].values():
+            if p.get("type") == "todo":
+                p["data"] = {"v": time.time()}
+                bumped = True
+        if bumped:
+            ctx.save_ui()
+            ctx.emit("ui", ctx.ui_state)
+
+
+@tool("todo.list", "주인의 할 일 목록(id, 내용, 완료 여부).")
+def todo_list(a, ctx):
+    return _todos()
+
+
+@tool("todo.add", "주인이 말한 할 일을 목록에 적는다. items: 할 일 문장들(주인이 말한 그대로).",
+      {"items": {"type": "array", "items": {"type": "string"}}}, risk="write", required=["items"])
+def todo_add(a, ctx):
+    items = _todos()
+    new = a["items"] if isinstance(a["items"], list) else [a["items"]]
+    have = {t["text"] for t in items if not t["done"]}
+    added = [x.strip() for x in new if str(x).strip() and str(x).strip() not in have]
+    for x in added:
+        items.append({"id": uuid.uuid4().hex[:4], "text": x, "done": False, "added": time.strftime("%m-%d %H:%M")})
+    _save_todos(items, ctx)
+    return f"적음: {', '.join(added) or '(이미 있음)'} — 남은 할 일 {sum(not t['done'] for t in items)}개"
+
+
+@tool("todo.done", "할 일을 끝낸 것으로 표시한다. which: id 또는 내용 일부. remove=true면 목록에서 지운다.",
+      {"which": {"type": "string"}, "remove": {"type": "boolean"}}, risk="write", required=["which"])
+def todo_done(a, ctx):
+    items, q = _todos(), str(a["which"]).strip()
+    hit = [t for t in items if t["id"] == q or q in t["text"]]
+    if not hit:
+        return f"'{q}'에 맞는 할 일이 없다: " + ", ".join(t["text"] for t in items)
+    for t in hit:
+        t["done"] = True
+    if a.get("remove"):
+        items = [t for t in items if t not in hit]
+    _save_todos(items, ctx)
+    return ("지움: " if a.get("remove") else "완료: ") + ", ".join(t["text"] for t in hit)
 
 
 # ───────────────────────── 기억 ─────────────────────────
@@ -623,12 +866,16 @@ def memory_consolidate(a, ctx):
 
 
 # ───────────────────────── 시간 · 예약 ─────────────────────────
-@tool("schedule.add", "나중에(또는 반복해서) 비서에게 일을 시킨다. at: 'HH:MM' 또는 'YYYY-MM-DD HH:MM', "
-      "every_minutes: 반복 간격(선택), prompt: 그때 할 일.",
-      {"at": {"type": "string"}, "every_minutes": {"type": "integer"}, "prompt": {"type": "string"}},
-      risk="write", required=["prompt"])
+@tool("schedule.add", "알림·예약. 주인에게 '…라고 알려줘/깨워줘'는 remind(알림에 띄울 말)만 쓴다. "
+      "나중에 비서가 할 일(검색해서 보고 등)은 prompt. 언제: in_minutes(몇 분 뒤) 또는 at('HH:MM', '내일 09:00', "
+      "'YYYY-MM-DD HH:MM'). every_minutes: 반복 간격(선택).",
+      {"at": {"type": "string"}, "in_minutes": {"type": "number"}, "every_minutes": {"type": "integer"},
+       "remind": {"type": "string"}, "prompt": {"type": "string"}}, risk="write")
 def schedule_add(a, ctx):
-    return ctx.scheduler_add(a)
+    if not (a.get("remind") or a.get("prompt")):
+        raise ValueError("remind(알림 문구)나 prompt(할 일) 중 하나는 있어야 한다.")
+    it = ctx.scheduler_add(a)
+    return f"예약됨 #{it['id']}: {it['label']}에 " + (f"알림 '{it['remind']}'" if it["remind"] else f"할 일 '{it['prompt']}'")
 
 
 @tool("schedule.list", "예약된 일 목록.")

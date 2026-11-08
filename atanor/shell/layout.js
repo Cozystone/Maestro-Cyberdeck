@@ -9,7 +9,9 @@
   const WIDE = { table: 1.45, app: 1.7, chart: 1.35, html: 1.45, gallery: 1.4, text: 1.12, form: 1, log: 1.3, buttons: 0.85, meter: 0.72, kv: 0.92, steps: 1 };
   const wf = (el) => WIDE[el.dataset.type] || 1;
   function measure(els, width) { return els.map((el) => { el.style.width = width + "px"; return el.offsetHeight; }); }
-  function measureEach(els, base, W) { return els.map((el) => { const w = Math.min(W - SIDE * 2, Math.round(base * wf(el))); el.style.width = w + "px"; return { w, h: el.offsetHeight }; }); }
+  // 주인이 고른 글자 배율(--ui-scale)만큼 패널도 넓힌다 — 내용이 커져도 줄바꿈이 늘지 않게
+  const uiScale = () => Math.max(0.8, Math.min(1.6, parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--ui-scale")) || 1));
+  function measureEach(els, base, W) { return els.map((el) => { const w = Math.min(W - SIDE * 2, Math.round(base * uiScale() * wf(el))); el.style.width = w + "px"; return { w, h: el.offsetHeight }; }); }
 
   // 가장 짧은 열에 차곡차곡 (메이슨리)
   function masonry(els, x0, y0, w, cols) {
