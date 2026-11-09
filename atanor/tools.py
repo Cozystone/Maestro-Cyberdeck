@@ -251,6 +251,36 @@ def net_tor(a, ctx):
     return (out or err or f"[종료코드 {code}]").strip()
 
 
+@tool("net.devices",
+      "집(로컬) 네트워크에 연결된 기기들을 찾아 목록으로 돌려준다 — 각 기기의 IP·이름·제조사. "
+      "'연결된 기기', '네트워크에 뭐가 있나', '기기 목록', '누가 접속해 있나' 같은 요청에 이걸 쓴다. "
+      "주의: system.status는 '이 노트북 자신'의 상태일 뿐 네트워크 기기 목록이 아니다. 한 기기의 열린 포트 상세는 kali.run{nmap -A <IP>}.",
+      risk="write")
+def net_devices(a, ctx):
+    _, sub, _ = run(["bash", "-lc", "ip -4 route 2>/dev/null | grep -oE '([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]+' | grep -vE '^0\\.|/32' | head -1"])
+    net = (sub or "").strip() or "192.168.0.0/24"
+    try:
+        code, out, err = run(["sudo", "-n", "podman", "exec", "kali", "nmap", "-sn", net], timeout=120)
+    except subprocess.TimeoutExpired:
+        return f"네트워크({net}) 스캔 시간 초과."
+    if _kali_missing(out, err):
+        return "Kali 컨테이너가 꺼져 있다. shell.run으로 'sudo podman start kali'."
+    devices, ip, name = [], None, None
+    for line in out.splitlines():
+        m = re.match(r"Nmap scan report for (?:(\S+) \()?([\d.]+)\)?", line)
+        if m:
+            if ip:
+                devices.append(f"{ip}  {name or '(이름 없음)'}")
+            name, ip = m.group(1), m.group(2)
+        elif "MAC Address" in line and ip:
+            v = re.search(r"MAC Address: \S+ \((.*)\)", line)
+            devices.append(f"{ip}  {name or '(이름 없음)'}  · {v.group(1) if v else '?'}")
+            ip = name = None
+    if ip:
+        devices.append(f"{ip}  {name or '(이름 없음)'}")
+    return f"집 네트워크({net}) 기기 {len(devices)}대:\n" + "\n".join(devices) if devices else f"기기를 못 찾음.\n{clip(out, 1500)}"
+
+
 def _tor(action):
     return run(["sudo", "-n", "/opt/atanor/system/atanor-tor-route.sh", action], timeout=20)
 

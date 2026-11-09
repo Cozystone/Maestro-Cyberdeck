@@ -101,8 +101,10 @@ SYSTEM = """너는 ASIGINT(아시긴트) — 이 컴퓨터 자체인 AI 운영�
 13. 할 일은 todo.* 도구로 다룬다: 적어 줘 → todo.add{items}, 했어/지워 → todo.done, 목록 → todo.list.
    할 일 패널 → ui.panel{id:"todo", type:"todo", title:"할 일"} (data를 넣지 않는다 — 실제 목록이 그려진다).
    주인의 할 일·일정·메모 내용은 절대 지어내지 않는다. 주인이 말한 것만 todo.add한다.
-14. 네트워크·보안 점검(포트 스캔, 취약점 확인, 침투 테스트)은 kali.run으로 Kali 컨테이너 안의 도구를 쓴다.
-   예: 포트 스캔 → kali.run{command:"nmap -sV 192.168.0.0/24"}, 한 대 자세히 → kali.run{command:"nmap -A <주소>"}.
+14. 집 네트워크에 '연결된 기기'를 찾는 건 net.devices다(기기 목록·IP·제조사를 한 번에). system.status는 '이 노트북 자신'의
+   상태일 뿐 네트워크 기기 목록이 아니다 — 기기 찾기에 system.status를 쓰지 마라.
+   그 밖의 네트워크·보안 점검(포트 스캔, 취약점 확인, 침투 테스트)은 kali.run으로 Kali 컨테이너 안의 도구를 쓴다.
+   예: 한 기기 포트 상세 → kali.run{command:"nmap -A <주소>"}, 대역 서비스 스캔 → kali.run{command:"nmap -sV 192.168.0.0/24"}.
    없는 도구는 kali.install로 먼저 넣는다. zenmap 같은 GUI는 kali.gui{app:"zenmap"}로 화면에 띄운다.
    Metasploit은 kali.msf{commands:"use ...; set RHOSTS ...; run"}로 쓴다(비대화형). msfvenom 등은 kali.run으로.
    추적 방지(바깥 통신을 Tor로)는 기본 켜짐이다. 켜고 끄기·확인 → net.tor{action:"on|off|status"}.
@@ -371,6 +373,7 @@ class Core:
             steps, final = [], None
             try:
                 seen, gathered, stalls, echo_retry = {}, False, 0, False
+                tool_counts = {}
                 # 뻔한 말(시간, 음량, 타이머…)은 두뇌를 거치지 않고 바로 한다 — 1초 안에 답
                 qr = V.quick(self, text) if not inner and source in ("user", "voice", "api") else None
                 fr = None
@@ -432,6 +435,13 @@ class Core:
                                      "결과만 써라. 주인이 직접 말해 준 내용만 담는 패널이면 인자에 \"source\": \"user\"를 넣어라. 지어내지 마라."})
                         continue
                     key = (name, json.dumps(args, sort_keys=True, ensure_ascii=False))
+                    tool_counts[name] = tool_counts.get(name, 0) + 1
+                    if tool_counts[name] >= 3 and name != "reply":   # 같은 도구를 3번 넘게 → 그만하고 정리
+                        stalls += 2
+                        msgs.append({"role": "user", "content": f"[시스템] '{name}'을 이미 여러 번 썼다. 더 쓰지 말고 "
+                                                                "지금까지 알아낸 것으로 reply하라. 다른 도구가 필요하면 그걸 써라."})
+                        if tool_counts[name] >= 4:
+                            continue
                     if key in seen:
                         stalls += 1
                         msgs.append({"role": "user", "content": f"[시스템] 이미 한 행동이다. 결과:\n{seen[key]}\n"
