@@ -365,6 +365,62 @@ def dojo_status(a, ctx):
     return out or "(상태 확인 실패)"
 
 
+@tool("dev.solve",
+      "코드를 쓰고 테스트까지 한 번에 돌려 결과를 돌려준다(자가수정 코딩 루프). files: {파일경로: 내용}을 격리 샌드박스에 쓰고, "
+      "test 명령을 돌린다(예: 'python3 solve.py', 'pytest -q'). 통과/실패와 출력을 보고, 실패하면 코드를 고쳐 다시 부른다 "
+      "— 통과할 때까지 반복한다. reset=true면 샌드박스를 비우고 시작.",
+      {"files": {"type": "object"}, "test": {"type": "string"}, "reset": {"type": "boolean"}},
+      risk="write", required=["files", "test"])
+def dev_solve(a, ctx):
+    files = a.get("files") or {}
+    test = (a.get("test") or "").strip()
+    if not isinstance(files, dict) or not files or not test:
+        return "files({파일경로:내용})와 test(돌릴 명령)를 줘라."
+    sb = "/root/dev"
+    pre = [f"rm -rf {sb}" if a.get("reset") else ":", f"mkdir -p {sb}"]
+    for path, content in files.items():
+        if ".." in str(path) or not re.fullmatch(r"[A-Za-z0-9_./-]{1,80}", str(path)):
+            return f"잘못된 파일 경로: {path}"
+        b = base64.b64encode(str(content).encode()).decode()
+        pre.append(f"mkdir -p \"$(dirname {sb}/{path})\" && echo {b} | base64 -d > {sb}/{path}")
+    script = " && ".join(pre) + f" && cd {sb} && timeout 60 bash -lc {shlex.quote(test)}"
+    try:
+        code, out, err = run(KALI_EXEC + ["kali", "bash", "-lc", script], timeout=90)
+    except subprocess.TimeoutExpired:
+        return "[시간 초과] 테스트가 60초를 넘겼다. 무한루프인지 코드를 보라."
+    res = (out + (("\n[stderr]\n" + err) if err else "")).strip()
+    return f"[{'통과 (exit 0)' if code == 0 else f'실패 (exit {code})'}]\n{clip(res, 6000)}"
+
+
+@tool("bb.verify",
+      "bb.recon이 찾은 발견들을 다시 확인해 오탐을 거른다(검증 오라클). scope: 검증할 도메인. "
+      "각 발견의 URL이 지금도 살아있고(응답 코드) 신호가 재현되는지 재조회해, 확인된 것과 사라진 것을 가른다.",
+      {"scope": {"type": "string"}}, risk="write", required=["scope"])
+def bb_verify(a, ctx):
+    scope = (a.get("scope") or "").strip().lower().lstrip("*.")
+    if not re.fullmatch(r"(?:[a-z0-9-]+\.)+[a-z]{2,}", scope):
+        return "scope는 도메인 하나여야 한다."
+    tor_was = (_tor("status")[1] or "").strip()
+    if tor_was == "ON":
+        _tor("off")
+    try:
+        script = (f"f=/root/bb/{scope}/nuclei.txt; [ -s \"$f\" ] || {{ echo '검증할 발견 없음(먼저 bb.recon)'; exit 0; }}; "
+                  "ok=0; dead=0; while read -r line; do "
+                  "u=$(echo \"$line\" | grep -oE 'https?://[^ ]+' | head -1); [ -z \"$u\" ] && continue; "
+                  "c=$(curl -s -o /dev/null -m 8 -w '%{http_code}' \"$u\"); "
+                  "if echo \"$c\" | grep -qE '^(2|3)'; then echo \"[확인 $c] $line\"; ok=$((ok+1)); "
+                  "else echo \"[사라짐 $c] $line\"; dead=$((dead+1)); fi; done < \"$f\"; "
+                  "echo; echo \"검증: 확인 $ok건 · 사라짐 $dead건\"")
+        code, out, err = run(KALI_EXEC + ["kali", "bash", "-lc", script], timeout=180)
+        text = out + (("\n[stderr]\n" + err) if err else "")
+    except subprocess.TimeoutExpired:
+        text = "[시간 초과]"
+    finally:
+        if tor_was == "ON":
+            _tor("on")
+    return clip(text, 6000)
+
+
 # ───────────────────────── 파일 ─────────────────────────
 @tool("file.read", "텍스트 파일을 읽는다.", {"path": {"type": "string"}}, required=["path"])
 def file_read(a, ctx):
