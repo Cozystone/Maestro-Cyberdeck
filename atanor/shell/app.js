@@ -323,7 +323,7 @@ window.atanor={ask:(text)=>call("ask",{text}),tool:(name,args)=>call("tool",{nam
       if (kind === "ui") render(data);
       else if (kind === "chat") { addMsg(data.role, data.text, data); if (data.role === "assistant") speak(data.text); }
       else if (kind === "thought") { addMsg("thought", data.text, { tool: data.tool !== "reply" ? data.tool : "" }); if (data.tool !== "reply") thinking(data.text); mindShow(data.text, data.tool, data.args); }
-      else if (kind === "step") { addMsg("step", `${data.tool} → ${String(data.result).slice(0, 160)}`, { fail: !data.ok }); orb.kick(0.25); mindStep(data.tool, data.result, data.ok); }
+      else if (kind === "step") { addMsg("step", `${data.tool} → ${String(data.result).slice(0, 160)}`, { fail: !data.ok }); orb.kick(0.08); mindStep(data.tool, data.result, data.ok); }
       else if (kind === "busy") { if (data === "inner") { orb.set("listen"); } else setBusy(data); if (data === false) { orb.set("idle"); mindIdle(); if (voice.textContent === "생각하는 중") { voice.textContent = ""; voice.classList.remove("thinking"); } } }
       else if (kind === "inner") { addMsg("inner", data.text, { tool: data.tool !== "reply" ? data.tool : "" }); if (!say.classList.contains("busy")) murmur(data.text); }
       else if (kind === "inner_step") { addMsg("step", `${data.tool} → ${String(data.result).slice(0, 120)}`, { fail: !data.ok }); orb.kick(0.15); }

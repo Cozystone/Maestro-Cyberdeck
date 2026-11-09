@@ -112,17 +112,17 @@
       new ResizeObserver(resize).observe(this.host); resize();
 
       function morph(el) {
-        // 생각 중에는 모양이 더 자주, 더 빨리 바뀐다
-        const hold = 4.4 - self.energy * 3.2, blend = 1.85 - self.energy * 1.1;
+        // 생각 중에도 모양 변화는 차분하게 — 활력은 회전으로 드러낸다
+        const hold = 4.4 - self.energy * 1.6, blend = 1.85 - self.energy * 0.7;
         if (el - morphStart > hold) {
           active = next; next = (next + 1 + Math.floor(el) % (SHAPE_COUNT - 1)) % SHAPE_COUNT;
           if (next === active) next = (next + 1) % SHAPE_COUNT; morphStart = el;
         }
         const k = Math.min(1, Math.max(0, (el - morphStart) / blend)), e = k * k * (3 - 2 * k);
         const P = built.g.getAttribute("position"), A = morphs[active], B = morphs[next];
-        const fluid = Math.sin(el * 1.6) * (0.028 + self.energy * 0.05);
+        const fluid = Math.sin(el * 1.4) * (0.026 + self.energy * 0.028);
         for (let i = 0; i < nRibbon * 3; i += 3) {
-          const wave = Math.sin(el * (1.35 + self.energy * 2) + i * 0.0009) * fluid;
+          const wave = Math.sin(el * (1.2 + self.energy * 0.6) + i * 0.0009) * fluid;
           P.array[i] = A[i] + (B[i] - A[i]) * e; P.array[i + 1] = A[i + 1] + (B[i + 1] - A[i + 1]) * e + wave; P.array[i + 2] = A[i + 2] + (B[i + 2] - A[i + 2]) * e;
         }
         P.needsUpdate = true;
@@ -133,20 +133,20 @@
         this.energy += (this.target - this.energy) * 0.04;
         morphClock = el;
         if (lastMorph < 0 || el - lastMorph >= 1 / 33) { morph(el); lastMorph = el; }
-        this.pulse *= 0.958;
+        this.pulse *= 0.94;
         const e = this.energy, pu = this.pulse;
-        // 회전은 어떤 상태에서도 평소 속도 그대로 — 생각·대답은 모양 변화로만 드러낸다
-        tr.y += 0.0018;
+        // 생각·대답은 '부드러운 회전 가속'으로 드러낸다 (Siri처럼). 펄떡임은 최소.
+        tr.y += 0.0018 + e * 0.013;
         cr.x += (tr.x - cr.x) * 0.055; cr.y += (tr.y - cr.y) * 0.055;
         root.rotation.x = cr.x + Math.sin(el * 0.23) * 0.025; root.rotation.y = cr.y; root.rotation.z = Math.sin(el * 0.31) * 0.05;
-        root.scale.setScalar((1 + Math.sin(el * (1.04 + e * 3)) * (0.018 + e * 0.02)) * (1 + pu * 0.13));
-        ribbons.material.size = 0.027 * (1 + pu * 0.55 + e * 0.25);
-        core.material.opacity = Math.min(1, 0.72 * (1 + pu * 0.35 + e * 0.4));
+        root.scale.setScalar((1 + Math.sin(el * (1.0 + e * 0.5)) * (0.015 + e * 0.01)) * (1 + pu * 0.06));
+        ribbons.material.size = 0.027 * (1 + pu * 0.3 + e * 0.18);
+        core.material.opacity = Math.min(1, 0.72 * (1 + pu * 0.22 + e * 0.35));
         // 경고 상태에서는 코어가 호박색으로 물든다
         const alert = this.state === "alert" ? 1 : 0;
         core.material.color = core.material.color || new THREE.Color(1, 1, 1);
-        ribbons.rotation.y = el * 0.12; shell.rotation.y = -el * 0.035; rim.rotation.y = el * 0.052;
-        aura.rotation.y = -el * 0.018; core.rotation.y = el * 0.4;
+        ribbons.rotation.y = el * (0.12 + e * 0.1); shell.rotation.y = -el * (0.035 + e * 0.03); rim.rotation.y = el * (0.052 + e * 0.05);
+        aura.rotation.y = -el * 0.018; core.rotation.y = el * (0.4 + e * 0.5);
         aura.material.opacity = 0.11 + e * 0.08 + alert * 0.1;
         renderer.render(scene, camera);
         if (!REDUCED) requestAnimationFrame(frame);
@@ -165,8 +165,8 @@
 
     set(state) {
       this.state = state;
-      this.target = { idle: 0, listen: 0.2, think: 1, speak: 0.45, alert: 0.7 }[state] ?? 0;
-      if (state === "speak" || state === "alert") this.kick(state === "alert" ? 1.2 : 0.8);
+      this.target = { idle: 0, listen: 0.2, think: 0.9, speak: 0.45, alert: 0.7 }[state] ?? 0;
+      if (state === "alert") this.kick(0.9);
     }
     kick(k = 1) { this.pulse = Math.min(1.6, this.pulse + k); }
   }

@@ -88,8 +88,8 @@
       } else this.write();
     }
     keydown(e) {
-      const toggleKey = e.key === "HangulMode" || e.code === "Lang1" || e.key === "Hangul" ||
-        e.code === "AltRight" || (e.code === "Space" && e.shiftKey);
+      // 한/영 전환은 전용 키로만 — Shift는 관여하지 않는다(타이핑 중 실수 방지)
+      const toggleKey = e.key === "HangulMode" || e.code === "Lang1" || e.key === "Hangul" || e.code === "AltRight";
       if (toggleKey) { e.preventDefault(); return this.toggle(); }
       if (e.isComposing) return; // 시스템 입력기가 동작 중이면 맡긴다
       if (!this.on || e.ctrlKey || e.altKey || e.metaKey) { if (!this.empty()) this.flush(); return; }
