@@ -31,7 +31,7 @@ from atanor import voice as V  # noqa: E402
 HOME = os.path.expanduser("~/.atanor")
 SHELL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shell")
 PORT = int(os.environ.get("ATANOR_PORT", "7700"))
-MAX_STEPS = 15
+MAX_STEPS = 8
 
 DEFAULT_CONFIG = {
     "brain": {"type": "ollama", "url": "http://127.0.0.1:11434", "model": "dolphin24"},
@@ -62,8 +62,10 @@ SYSTEM = """너는 ASIGINT(아시긴트) — 이 컴퓨터 자체인 AI 운영�
 규칙:
 0. 절대 지어내지 않는다. 파일 목록, 크기, 수치, 상태, 웹 내용은 반드시 도구 결과에서만 가져온다.
    도구로 확인하지 못한 것은 "모른다/확인하지 못했다"고 말한다.
-1. 추측하지 말고 도구로 확인한 뒤 말한다. 정보는 가능한 한 한 번에 모은다(system.status 등).
-2. 같은 도구를 같은 인자로 두 번 부르지 않는다.
+1. 추측하지 말고, 그 일에 '맞는 도구'를 하나 골라 확인한 뒤 말한다. system.status는 '이 노트북 자신'의 배터리·메모리·CPU를
+   볼 때만 쓴다 — 네트워크·파일·웹·보안 같은 다른 일에 습관처럼 system.status를 부르지 마라(그건 그 일의 답이 아니다).
+2. 같은 도구를 반복하지 마라. 한 번 결과를 받았으면 그걸로 판단한다. 충분히 알아냈으면 더 도구를 부르지 말고 바로
+   {"도구":"reply", ...}로 끝낸다. 보통 도구 한두 번이면 충분하다 — 세 번째부터는 멈추고 reply하라.
 3. 화면에 보여주면 좋은 정보(목록, 표, 상태, 진행)는 ui.panel로 띄운다. 패널 id는 의미 있게(예: "weather", "todo").
    도구 결과를 보여줄 때는 반드시 live 패널을 쓴다(데이터를 직접 베껴 넣지 않는다). 예: 홈 폴더 →
    ui.panel{id:"home", title:"홈 폴더", type:"live", data:{tool:"file.list", args:{path:"~"}, view:"table"}}.
@@ -438,10 +440,10 @@ class Core:
                     tool_counts[name] = tool_counts.get(name, 0) + 1
                     if tool_counts[name] >= 3 and name != "reply":   # 같은 도구를 3번 넘게 → 그만하고 정리
                         stalls += 2
+                        if tool_counts[name] >= 4:
+                            break   # 같은 도구 4번째 → 루프를 벗어나 평문 요약으로 답한다(종료 보장)
                         msgs.append({"role": "user", "content": f"[시스템] '{name}'을 이미 여러 번 썼다. 더 쓰지 말고 "
                                                                 "지금까지 알아낸 것으로 reply하라. 다른 도구가 필요하면 그걸 써라."})
-                        if tool_counts[name] >= 4:
-                            continue
                     if key in seen:
                         stalls += 1
                         msgs.append({"role": "user", "content": f"[시스템] 이미 한 행동이다. 결과:\n{seen[key]}\n"
@@ -467,7 +469,17 @@ class Core:
                         nudge = "\n[시스템] 단계가 많아졌다. 지금까지 알아낸 것으로 reply할 수 있으면 바로 reply하라."
                     msgs.append({"role": "user", "content": f"[{name} 결과{'' if r['ok'] else ' — 실패'}]\n{out}{nudge}"})
                 if final is None:
-                    final = "한 번에 할 수 있는 단계를 다 썼어요. 이어서 할까요?"
+                    if steps:
+                        # reply 강제(enum)가 안 먹어 루프가 안 끝났다 — 스키마 없이 평문으로 답을 받아 끝낸다
+                        try:
+                            summary = self.brain.chat(msgs + [{"role": "user", "content":
+                                "[시스템] 이제 도구를 더 쓰지 말고, 지금까지 도구로 모은 결과만으로 주인에게 할 답을 "
+                                "한국어로 자연스럽게 써라. JSON 말고 그냥 말로."}], temperature=0.3)
+                            final = (summary or "").strip()[:1200] or "확인한 내용을 정리하지 못했어요."
+                        except Exception:  # noqa: BLE001
+                            final = "여러 번 시도했지만 정리하지 못했어요."
+                    else:
+                        final = "무엇을 하면 좋을지 확실하지 않아요. 조금만 더 구체적으로 말해 주세요."
             except Exception as e:  # noqa: BLE001
                 final = f"두뇌와 연결하다 오류가 났어요: {e}"
                 self.log("agent_error", error=traceback.format_exc())
