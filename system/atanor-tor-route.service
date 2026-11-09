@@ -1,0 +1,13 @@
+[Unit]
+Description=ATANOR 사이버덱 투명 Tor 라우팅 (기본 켜짐)
+After=tor@default.service nftables.service network-online.target
+Wants=tor@default.service nftables.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/atanor/system/atanor-tor-route.sh on
+ExecStop=/opt/atanor/system/atanor-tor-route.sh off
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

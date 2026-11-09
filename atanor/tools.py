@@ -227,6 +227,24 @@ def kali_msf(a, ctx):
     return f"[종료코드 {code}]\n{clip(text) or '(출력 없음)'}"
 
 
+@tool("net.tor", "사이버덱의 바깥 인터넷 통신을 Tor로 보내 추적을 막는 기능을 켜고 끈다. "
+      "action: on(켜기)|off(끄기)|status(상태와 현재 출구 IP). 로컬 두뇌·LAN·들어오는 SSH는 Tor를 타지 않는다. "
+      "기본은 켜짐(부팅 시 자동). 바깥 대상 nmap 스캔은 Tor로 안 되니 그때만 off로 껐다가 끝나면 다시 on 한다.",
+      {"action": {"type": "string", "enum": ["on", "off", "status"]}}, risk="write", required=["action"])
+def net_tor(a, ctx):
+    act = (a.get("action") or "status").strip()
+    if act not in ("on", "off", "status"):
+        return "action은 on|off|status 중 하나"
+    code, out, err = run(["sudo", "-n", "/opt/atanor/system/atanor-tor-route.sh", act], timeout=30)
+    if act == "status":
+        st = (out or "").strip()
+        if st == "ON":
+            _, ip, _ = run(["bash", "-lc", "curl -s -m 12 https://check.torproject.org/api/ip 2>/dev/null"], timeout=16)
+            return f"Tor 라우팅 켜짐. {ip}" if ip else "Tor 라우팅 켜짐(출구 확인 못 함)."
+        return "Tor 라우팅 꺼짐." if st == "OFF" else f"상태: {clip(out or err)}"
+    return (out or err or f"[종료코드 {code}]").strip()
+
+
 # ───────────────────────── 파일 ─────────────────────────
 @tool("file.read", "텍스트 파일을 읽는다.", {"path": {"type": "string"}}, required=["path"])
 def file_read(a, ctx):

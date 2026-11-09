@@ -49,10 +49,28 @@ echo uinput | sudo tee /etc/modules-load.d/atanor-uinput.conf >/dev/null
 sudo modprobe uinput; sudo udevadm control --reload; sudo udevadm trigger --subsystem-match=misc
 sudo usermod -aG video,input,seat,render,audio mind 2>/dev/null || true
 
+# 추적 방지: 바깥 인터넷 통신을 기본으로 Tor를 거치게 한다(로컬 두뇌·LAN·들어오는 SSH는 제외)
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q tor >/dev/null
+if ! grep -q "ATANOR transparent Tor" /etc/tor/torrc 2>/dev/null; then
+  sudo tee -a /etc/tor/torrc >/dev/null <<'TORRC'
+
+# === ATANOR transparent Tor ===
+SOCKSPort 127.0.0.1:9050
+DNSPort 127.0.0.1:5353
+TransPort 127.0.0.1:9040
+VirtualAddrNetworkIPv4 10.192.0.0/10
+AutomapHostsOnResolve 1
+AutomapHostsSuffixes .onion,.exit
+TORRC
+fi
+sudo chmod +x /opt/atanor/system/atanor-tor-route.sh
+sudo systemctl enable --now tor@default >/dev/null 2>&1 || true
+sudo systemctl restart tor@default >/dev/null 2>&1 || true
+
 # services
-sudo cp /opt/atanor/system/atanor-core.service /opt/atanor/system/atanor-session.service /etc/systemd/system/
+sudo cp /opt/atanor/system/atanor-core.service /opt/atanor/system/atanor-session.service /opt/atanor/system/atanor-tor-route.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable seatd atanor-core atanor-session >/dev/null
+sudo systemctl enable seatd atanor-core atanor-session atanor-tor-route >/dev/null
 sudo systemctl restart atanor-core
 sudo loginctl enable-linger mind
 echo "ATANOR installed. Core: $(sleep 2; curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:7700/static/style.css)"
