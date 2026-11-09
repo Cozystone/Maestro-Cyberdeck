@@ -216,6 +216,19 @@ def quick(core, text):
             return T.TOOLS["intel.gather"]["fn"]({"subject": mo.group(1)}, core), []
         except Exception:  # noqa: BLE001
             return None
+    # 앱 열기 — 알려진 앱 이름 + 열기 동사면 바로 app.open(dolphin 과잉행동 방지)
+    _APP_OPEN = {"크롬": "chromium", "크로미움": "chromium", "브라우저": "chromium", "웹브라우저": "chromium", "chrome": "chromium",
+                 "터미널": "foot", "콘솔": "foot", "파일관리자": "pcmanfm", "파일탐색기": "pcmanfm", "탐색기": "pcmanfm",
+                 "파일": "pcmanfm", "동영상": "mpv", "미디어플레이어": "mpv", "mpv": "mpv", "vim": "vim", "빔": "vim"}
+    if re.search(r"(열어|띄워|실행|켜 ?줘|켜 ?봐)", s):
+        flat = s.replace(" ", "")
+        for kname, appid in _APP_OPEN.items():
+            if kname in flat:
+                try:
+                    T.TOOLS["app.open"]["fn"]({"app": appid}, core)
+                    return f"{kname} 열었어요.", []
+                except Exception:  # noqa: BLE001
+                    return None
     if not s or len(s) > 32:
         return None
     steps = []
