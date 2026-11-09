@@ -195,6 +195,13 @@ def quick(core, text):
     """뻔한 말이면 (답, 단계들). 아니면 None — 두뇌가 맡는다."""
     s = re.sub(r"[.!?~]+$", "", text.strip())
     s = re.sub(r"\s+", " ", s)
+    # 네트워크 기기 찾기 — 길이와 무관하게 바로 net.devices로(약한 모델이 헤매지 않게)
+    if re.search(r"(네트워크|와이파이|랜|lan|집).{0,8}(기기|장치|연결|device).{0,14}(있|알려|보여|찾|목록|스캔|뭐)"
+                 r"|연결(된|돼 ?있는)\s*(기기|장치)|기기\s*목록|접속(한|된)\s*기기|누가\s*(접속|연결|들어)", s, re.I):
+        try:
+            return T.TOOLS["net.devices"]["fn"]({}, core), []
+        except Exception:  # noqa: BLE001
+            return None
     if not s or len(s) > 32:
         return None
     steps = []
