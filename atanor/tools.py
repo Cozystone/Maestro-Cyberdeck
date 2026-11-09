@@ -29,6 +29,11 @@ DANGEROUS_SHELL = [
     r"\bbtrfs\s+(subvolume\s+delete|balance|device)", r"\bsnapper\s+(delete|rollback|undochange)",
     r">\s*/dev/sd", r"\bcrontab\s+-r\b", r"\biptables\b|\bnft\s+(flush|delete)", r"curl[^|]*\|\s*(sudo\s+)?(ba)?sh",
     r"\.atanor/(memory|token)", r"\bkill(all)?\s+.*(sway|atanor)",
+    # 외부 다운로드·설치는 주인 승인 필요 — 방법·노하우만 가져오고 툴·실행파일은 내려받지 않는다
+    r"\bwget\b", r"\bcurl\b[^|]*\s-[a-zA-Z]*O\b",
+    r"\bcurl\b[^|]*-o\s+\S+\.(sh|deb|rpm|bin|run|AppImage|exe|tgz|ta?r|gz|zip|whl|jar|py|pl)\b",
+    r"\bgit\s+clone\b", r"\b(pip|pip3|pipx)\s+install\b", r"\bnpm\s+(install|i|add)\b",
+    r"\bapt(-get)?\s+install\b", r"\bollama\s+(pull|run|create)\b", r"\b(gem|cargo|go)\s+install\b",
 ]
 PROTECTED_PATHS = ("/etc", "/boot", "/usr", "/bin", "/sbin", "/lib", "/var/lib", "/opt/atanor")
 
