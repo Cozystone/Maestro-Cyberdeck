@@ -243,6 +243,48 @@ window.atanor={ask:(text)=>call("ask",{text}),tool:(name,args)=>call("tool",{nam
     if (role === "user" || role === "assistant") el.innerHTML += `<time>${new Date(extra.t || Date.now()).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}</time>`;
     msgs.appendChild(el); msgs.scrollTop = msgs.scrollHeight;
   }
+  // ---------- 마음 HUD: 지금 생각·하는 일·보는 대상 ----------
+  const mind = $("#mind"), mindAct = $("#mind-act"), mindTgt = $("#mind-target"),
+        mindThought = $("#mind-thought"), mindStream = $("#mind-stream");
+  const TOOLPHRASE = {
+    "bb.recon": "정찰", "kali.run": "보안 셸", "kali.msf": "Metasploit", "kali.gui": "도구 띄우기",
+    "kali.install": "도구 설치", "net.tor": "Tor 전환", "web.fetch": "웹 읽기", "web.open": "웹 열기",
+    "web.search": "웹 검색", "weather.get": "날씨", "screen.look": "화면 보기", "eye.see": "화면 보기",
+    "eye.act": "화면 조작", "file.read": "파일 읽기", "file.write": "파일 쓰기", "file.search": "파일 찾기",
+    "shell.run": "명령 실행", "memory.remember": "기억하기", "ui.panel": "화면 구성", "ui.app": "앱 만들기",
+  };
+  function mTarget(tool, a) {
+    a = a || {};
+    if (tool === "bb.recon") return a.scope || "";
+    if (tool === "kali.msf") return ((a.commands || "").match(/RHOSTS\s+(\S+)/i) || [])[1] || "";
+    if (tool === "kali.run" || tool === "shell.run") { const c = a.command || ""; return ((c.match(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?:\/\d+)?|[a-z0-9.-]+\.[a-z]{2,})\b/i) || [])[1]) || c.split(/\s+/)[0] || ""; }
+    if (tool === "web.fetch" || tool === "web.open") return (a.url || "").replace(/^https?:\/\//, "").slice(0, 48);
+    if (tool === "web.search") return a.query || "";
+    if (tool === "weather.get") return a.place || "";
+    if (tool === "file.read" || tool === "file.write" || tool === "file.search") return (a.path || a.name || "").split("/").pop();
+    if (tool === "kali.gui" || tool === "kali.install") return a.app || a.names || "";
+    if (tool === "net.tor") return a.action || "";
+    return "";
+  }
+  let mindHideT = null;
+  function mindShow(thought, tool, args) {
+    if (!tool || tool === "reply") { if (thought) mindThought.textContent = thought; return; }
+    clearTimeout(mindHideT);
+    mind.hidden = false; document.documentElement.setAttribute("data-state", "working");
+    mindAct.textContent = TOOLPHRASE[tool] || tool;
+    const tg = mTarget(tool, args); mindTgt.textContent = tg ? "→ " + tg : "";
+    mindThought.textContent = thought || "";
+  }
+  function mindStep(tool, result, ok) {
+    if (mind.hidden) return;
+    const li = document.createElement("li"); if (!ok) li.className = "fail";
+    li.innerHTML = `<code>${esc(tool)}</code> ${esc(String(result).slice(0, 70))}`;
+    mindStream.appendChild(li); while (mindStream.children.length > 6) mindStream.firstChild.remove();
+  }
+  function mindIdle() {
+    clearTimeout(mindHideT);
+    mindHideT = setTimeout(() => { mind.hidden = true; mindStream.innerHTML = ""; if (document.documentElement.getAttribute("data-state") === "working") document.documentElement.setAttribute("data-state", "idle"); }, 2600);
+  }
   function setBusy(b) { say.classList.toggle("busy", b); if (b) { orb.set("think"); thinking("생각하는 중"); } }
   async function send(text) { text = (text || "").trim(); if (!text) return; prompt.value = ""; autosize(); orb.set("think"); await api("/api/ask", { text, source: "user" }); }
 
@@ -280,9 +322,9 @@ window.atanor={ask:(text)=>call("ask",{text}),tool:(name,args)=>call("tool",{nam
       const { kind, data } = JSON.parse(e.data);
       if (kind === "ui") render(data);
       else if (kind === "chat") { addMsg(data.role, data.text, data); if (data.role === "assistant") speak(data.text); }
-      else if (kind === "thought") { addMsg("thought", data.text, { tool: data.tool !== "reply" ? data.tool : "" }); if (data.tool !== "reply") thinking(data.text); }
-      else if (kind === "step") { addMsg("step", `${data.tool} → ${String(data.result).slice(0, 160)}`, { fail: !data.ok }); orb.kick(0.25); }
-      else if (kind === "busy") { if (data === "inner") { orb.set("listen"); } else setBusy(data); if (data === false) { orb.set("idle"); if (voice.textContent === "생각하는 중") { voice.textContent = ""; voice.classList.remove("thinking"); } } }
+      else if (kind === "thought") { addMsg("thought", data.text, { tool: data.tool !== "reply" ? data.tool : "" }); if (data.tool !== "reply") thinking(data.text); mindShow(data.text, data.tool, data.args); }
+      else if (kind === "step") { addMsg("step", `${data.tool} → ${String(data.result).slice(0, 160)}`, { fail: !data.ok }); orb.kick(0.25); mindStep(data.tool, data.result, data.ok); }
+      else if (kind === "busy") { if (data === "inner") { orb.set("listen"); } else setBusy(data); if (data === false) { orb.set("idle"); mindIdle(); if (voice.textContent === "생각하는 중") { voice.textContent = ""; voice.classList.remove("thinking"); } } }
       else if (kind === "inner") { addMsg("inner", data.text, { tool: data.tool !== "reply" ? data.tool : "" }); if (!say.classList.contains("busy")) murmur(data.text); }
       else if (kind === "inner_step") { addMsg("step", `${data.tool} → ${String(data.result).slice(0, 120)}`, { fail: !data.ok }); orb.kick(0.15); }
       else if (kind === "inner_done") { addMsg("inner", data.text); if (!say.classList.contains("busy")) murmur(data.text, true); }

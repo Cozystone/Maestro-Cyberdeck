@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import base64
 import time
+import threading
 import uuid
 import urllib.request
 
@@ -269,17 +270,49 @@ def bb_recon(a, ctx):
     tor_was = (_tor("status")[1] or "").strip()
     if tor_was == "ON":
         _tor("off")
+    cmd = ["sudo", "-n", "podman", "exec", "-e", f"BB_HEADER={hdr}", "kali",
+           "bash", "/root/bb/bb-recon.sh", scope, mode]
     try:
-        code, out, err = run(["sudo", "-n", "podman", "exec", "-e", f"BB_HEADER={hdr}", "kali",
-                              "bash", "/root/bb/bb-recon.sh", scope, mode], timeout=1700)
-        text = out + (("\n[stderr]\n" + err) if err else "")
-    except subprocess.TimeoutExpired:
-        text = ("[시간 초과] 스코프가 커서 오래 걸린다. 컨테이너 안에서 백그라운드로 돌려라: "
-                f"kali.run로 'nohup bash /root/bb/bb-recon.sh {scope} {mode} > /root/bb/{scope}.log 2>&1 &' 실행 뒤 "
-                f"나중에 /root/bb/{scope}.log를 kali.run로 읽는다.")
+        if ctx is None:
+            _, out, err = run(cmd, timeout=1700)
+            text = out + (("\n[stderr]\n" + err) if err else "")
+        else:
+            # 진행 상황을 단계별로 화면(마음 HUD)에 흘린다
+            lines = []
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 text=True, stdin=subprocess.DEVNULL)
+            killer = threading.Timer(1700, p.kill)
+            killer.start()
+            try:
+                for line in p.stdout:
+                    line = line.rstrip("\n")
+                    lines.append(line)
+                    if line.startswith("[*]"):
+                        try:
+                            ctx.emit("thought", {"text": f"정찰: {line[4:].strip()}",
+                                                 "tool": "bb.recon", "args": {"scope": scope}})
+                        except Exception:
+                            pass
+                p.wait()
+            finally:
+                killer.cancel()
+            text = "\n".join(lines)
     finally:
         if tor_was == "ON":
             _tor("on")
+    # 결과를 ATANOR 기억에 남겨 다음 실행이 더 똑똑해지게 한다(심각도가 높을수록 오래 기억)
+    try:
+        if ctx is not None and getattr(ctx, "memory", None):
+            m = re.search(r"critical=(\d+)\s+high=(\d+)\s+medium=(\d+)", text)
+            crit, high, med = (int(m[1]), int(m[2]), int(m[3])) if m else (0, 0, 0)
+            finds = re.findall(r"\[(?:critical|high|medium)\].*", text)[:8]
+            imp = 0.9 if crit else 0.8 if high else 0.6 if med else 0.4
+            note = (f"버그바운티 정찰 {scope} ({time.strftime('%Y-%m-%d')}): "
+                    f"nuclei critical={crit} high={high} medium={med}. "
+                    + (("주요 발견:\n" + "\n".join(finds)) if finds else "눈에 띄는 발견 없음."))
+            ctx.memory.remember(note, kind="episodic", importance=imp, source="bb.recon")
+    except Exception:
+        pass
     tail = " (Tor 다시 켜짐)" if tor_was == "ON" else ""
     return f"[정찰 끝{tail}]\n{clip(text, 8000)}"
 

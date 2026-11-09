@@ -143,3 +143,24 @@ iframe.appframe { width: 100%; height: 360px; border: 0; background: transparent
 #mic[data-state="once"], #mic[data-state="hearing"], #mic[data-state="recognizing"] { color: var(--accent, var(--cyan)); border-color: var(--accent, var(--cyan)); box-shadow: 0 0 12px color-mix(in srgb, var(--accent, #20f4ff) 45%, transparent); }
 #mic[data-state="nomic"], #mic[data-state="error"] { color: var(--faint); }
 #orb-wrap { cursor: pointer; }
+
+/* 마음 HUD — 지금 생각·하는 일·보는 대상 */
+#mind { position: fixed; z-index: 7; left: 50%; bottom: 92px; transform: translateX(-50%) translateY(10px);
+  width: min(580px, 92vw); padding: 13px 18px 11px; background: var(--veil); backdrop-filter: blur(12px);
+  border: 1px solid var(--line); border-top: 1px solid var(--edge); border-radius: 3px;
+  opacity: 0; transition: opacity .45s, transform .45s; pointer-events: none; box-shadow: 0 0 42px rgba(32,244,255,.09); }
+#mind:not([hidden]) { opacity: 1; transform: translateX(-50%) translateY(0); }
+#mind-head { display: flex; align-items: baseline; gap: 10px; font: 12px var(--mono); }
+#mind-act { color: var(--accent, var(--cyan)); letter-spacing: .04em; animation: mindpulse 1.8s ease-in-out infinite; }
+#mind-act::before { content: "▸ "; }
+#mind-target { color: var(--dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+#mind-thought { margin-top: 6px; color: var(--text); font: 13.5px/1.55 var(--sans); min-height: 1.2em; }
+#mind-stream { list-style: none; margin: 8px 0 0; padding: 8px 0 0; border-top: 1px solid var(--line); }
+#mind-stream:empty { display: none; }
+#mind-stream li { font: 11.5px/1.7 var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#mind-stream li.fail { color: var(--rose); }
+#mind-stream li code { color: var(--violet); margin-right: 6px; }
+@keyframes mindpulse { 0%, 100% { opacity: .6; } 50% { opacity: 1; } }
+/* 작업 중엔 패널이 한 발 물러나 집중을 돕는다 (자의적 재구성) */
+html[data-state="working"] #stage { opacity: .45; filter: blur(1.2px); transition: opacity .5s, filter .5s; }
+@media (prefers-reduced-motion: reduce) { #mind-act { animation: none; } }
