@@ -148,13 +148,39 @@ class Sentinel:
         return actions
 
     # ---------- 2차: 모델 ----------
+    def _learned(self):
+        """도장·방법론에서 배운 공격 신호를 떠올려 경비 판단에 쓴다(학습→방어 루프)."""
+        try:
+            rows = self.core.memory.db.execute(
+                "SELECT content FROM memories WHERE source IN ('dojo', 'methodology') AND archived=0 "
+                "ORDER BY importance DESC LIMIT 3").fetchall()
+            return "\n".join("- " + r[0][:200] for r in rows)
+        except Exception:  # noqa: BLE001
+            return ""
+
     def analyze(self, events):
         try:
-            raw = self.core.brain.chat([{"role": "user", "content": PROMPT.replace("{events}", "\n\n".join(events)[:6000])}],
-                                       schema=ANALYSIS_SCHEMA, temperature=0.1)
+            prompt = PROMPT.replace("{events}", "\n\n".join(events)[:5500])
+            learned = self._learned()
+            if learned:
+                prompt += "\n\n[도장에서 배운 공격 신호 — 이런 패턴이 보이면 공격으로 본다]\n" + learned
+            raw = self.core.brain.chat([{"role": "user", "content": prompt}], schema=ANALYSIS_SCHEMA, temperature=0.1)
             return json.loads(raw)
         except Exception as e:  # noqa: BLE001
             return {"위협도": "알 수 없음", "요약": f"분석 실패: {e}", "대응": []}
+
+    def profile_ip(self, ip):
+        """공격자 IP의 신원을 수동으로 파악한다(역DNS·Shodan 공개정보). 역해킹이 아니라 조회만."""
+        if not re.match(r"^\d+\.\d+\.\d+\.\d+$", ip):
+            return ""
+        try:
+            r = subprocess.run(["sudo", "-n", "podman", "exec", "kali", "bash", "-lc",
+                 f"host {ip} 2>/dev/null | head -1; shodan host {ip} 2>/dev/null | "
+                 "grep -iE 'country|city|org|isp|hostnames|tags|ports' | head -8"],
+                 capture_output=True, text=True, timeout=40)
+            return r.stdout.strip()
+        except Exception:  # noqa: BLE001
+            return ""
 
     # ---------- 대응 ----------
     def block_ip(self, ip, why):
@@ -247,13 +273,27 @@ class Sentinel:
         acts = [(a.get("행동"), a.get("대상", ""), a.get("이유", "")) for a in verdict.get("대응", [])
                 if a.get("행동") in ("block_ip", "kill_process")]
         done += self.act(acts, "ai")
+        # 차단한 공격자는 누구인지 수동으로 파악해 둔다(공개정보 조회)
+        profiles = {}
+        for d in done:
+            m = re.search(r"(\d+\.\d+\.\d+\.\d+) 차단", d)
+            if m and m.group(1) not in profiles:
+                p = self.profile_ip(m.group(1))
+                if p:
+                    profiles[m.group(1)] = p
         incident = {"t": time.strftime("%Y-%m-%d %H:%M"), "level": level, "summary": verdict.get("요약", ""),
                     "evidence": verdict.get("근거", ""), "actions": done, "events": events[:6]}
+        if profiles:
+            incident["attackers"] = profiles
         self.state["incidents"] = (self.state["incidents"] + [incident])[-200:]
         self.core.log("sentinel", **incident)
         self._save()
         if level in ("중간", "높음", "긴급") or done:
-            self.core.emit("notify", {"title": f"🛡 Sentinel · 위협 {level}", "body": verdict.get("요약", "")[:160]})
+            body = verdict.get("요약", "")[:140]
+            if profiles:
+                body += " | 공격자: " + "; ".join(f"{ip}({p.splitlines()[0][:36]})" for ip, p in profiles.items())
+            self.core.emit("notify", {"title": f"🛡 Sentinel · 위협 {level}", "body": body,
+                                      "sticky": level in ("높음", "긴급")})
             self.core.memory.log_event("sentinel", f"[{level}] {verdict.get('요약', '')} / 대응: {', '.join(done) or '없음'}")
         self.core.emit("sentinel", self.summary())
 
@@ -299,3 +339,9 @@ def start(core):
     def sentinel_scan(a, ctx):
         s.tick()
         return s.summary()
+
+    @T.tool("defense.profile", "공격자(또는 수상한) IP의 신원을 공개정보로 파악한다(역DNS·Shodan). 역해킹이 아니라 조회만.",
+            {"ip": {"type": "string"}}, risk="read", required=["ip"])
+    def defense_profile(a, ctx):
+        p = s.profile_ip(a.get("ip", ""))
+        return p or "조회 결과 없음(크레딧/미등록이거나 정보 없음)."
