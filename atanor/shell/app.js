@@ -285,7 +285,7 @@ window.atanor={ask:(text)=>call("ask",{text}),tool:(name,args)=>call("tool",{nam
     clearTimeout(mindHideT);
     mindHideT = setTimeout(() => { mind.hidden = true; mindStream.innerHTML = ""; if (document.documentElement.getAttribute("data-state") === "working") document.documentElement.setAttribute("data-state", "idle"); }, 2600);
   }
-  function setBusy(b) { say.classList.toggle("busy", b); if (b) { orb.set("think"); thinking("생각하는 중"); } }
+  function setBusy(b) { say.classList.toggle("busy", b); if (b) { orb.set("think"); thinking("생각하는 중 · 멈추려면 오브를 누르거나 Esc"); } }
   async function send(text) { text = (text || "").trim(); if (!text) return; prompt.value = ""; autosize(); orb.set("think"); await api("/api/ask", { text, source: "user" }); }
 
   // ---------- 입력 ----------
@@ -302,7 +302,10 @@ window.atanor={ask:(text)=>call("ask",{text}),tool:(name,args)=>call("tool",{nam
   $("#log-toggle").onclick = () => ($("#log").hidden = !$("#log").hidden);
   $("#log-clear").onclick = () => api("/api/history/clear", {});
   $("#mic").onclick = () => VOX.listenOnce();
-  $("#orb-wrap").addEventListener("click", () => VOX.listenOnce());
+  $("#orb-wrap").addEventListener("click", () => {
+    if (say.classList.contains("busy")) { api("/api/cancel", {}); VOX.stopSpeaking(); thinking("중단하는 중…"); }
+    else VOX.listenOnce();
+  });
   document.addEventListener("keydown", (e) => {
     if (e.ctrlKey && (e.code === "Space" || e.key === " ")) { e.preventDefault(); e.stopImmediatePropagation(); VOX.listenOnce(); }
   }, true);

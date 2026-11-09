@@ -120,9 +120,11 @@
         }
         const k = Math.min(1, Math.max(0, (el - morphStart) / blend)), e = k * k * (3 - 2 * k);
         const P = built.g.getAttribute("position"), A = morphs[active], B = morphs[next];
-        const fluid = Math.sin(el * 1.4) * (0.026 + self.energy * 0.028);
+        // 생각할수록 '안의 일렁거림'이 커진다 — 회전 속도는 건드리지 않는다
+        const fluid = Math.sin(el * 1.35) * (0.022 + self.energy * 0.07);
         for (let i = 0; i < nRibbon * 3; i += 3) {
-          const wave = Math.sin(el * (1.2 + self.energy * 0.6) + i * 0.0009) * fluid;
+          const wave = Math.sin(el * (1.15 + self.energy * 0.45) + i * 0.0011) * fluid
+                     + Math.sin(el * 0.7 + i * 0.0004) * self.energy * 0.012;
           P.array[i] = A[i] + (B[i] - A[i]) * e; P.array[i + 1] = A[i + 1] + (B[i + 1] - A[i + 1]) * e + wave; P.array[i + 2] = A[i + 2] + (B[i + 2] - A[i + 2]) * e;
         }
         P.needsUpdate = true;
@@ -135,8 +137,8 @@
         if (lastMorph < 0 || el - lastMorph >= 1 / 33) { morph(el); lastMorph = el; }
         this.pulse *= 0.94;
         const e = this.energy, pu = this.pulse;
-        // 생각·대답은 '부드러운 회전 가속'으로 드러낸다 (Siri처럼). 펄떡임은 최소.
-        tr.y += 0.0018 + e * 0.013;
+        // 회전 속도는 상태와 무관하게 일정 — 생각·대답은 '안의 일렁거림'으로만 드러낸다. 펄떡임 없음.
+        tr.y += 0.0018;
         cr.x += (tr.x - cr.x) * 0.055; cr.y += (tr.y - cr.y) * 0.055;
         root.rotation.x = cr.x + Math.sin(el * 0.23) * 0.025; root.rotation.y = cr.y; root.rotation.z = Math.sin(el * 0.31) * 0.05;
         root.scale.setScalar((1 + Math.sin(el * (1.0 + e * 0.5)) * (0.015 + e * 0.01)) * (1 + pu * 0.06));
@@ -145,8 +147,8 @@
         // 경고 상태에서는 코어가 호박색으로 물든다
         const alert = this.state === "alert" ? 1 : 0;
         core.material.color = core.material.color || new THREE.Color(1, 1, 1);
-        ribbons.rotation.y = el * (0.12 + e * 0.1); shell.rotation.y = -el * (0.035 + e * 0.03); rim.rotation.y = el * (0.052 + e * 0.05);
-        aura.rotation.y = -el * 0.018; core.rotation.y = el * (0.4 + e * 0.5);
+        ribbons.rotation.y = el * 0.12; shell.rotation.y = -el * 0.035; rim.rotation.y = el * 0.052;
+        aura.rotation.y = -el * 0.018; core.rotation.y = el * 0.4;
         aura.material.opacity = 0.11 + e * 0.08 + alert * 0.1;
         renderer.render(scene, camera);
         if (!REDUCED) requestAnimationFrame(frame);

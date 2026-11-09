@@ -335,6 +335,25 @@ class Core:
             return reply
         return None
 
+    def _chat_cancellable(self, msgs, schema=None):
+        """brain.chat을 별도 스레드로 돌려, 생성 중에도 cancel_flag로 즉시 중단할 수 있게 한다."""
+        box = {}
+
+        def go():
+            try:
+                box["v"] = self.brain.chat(msgs, schema=schema)
+            except Exception as e:  # noqa: BLE001
+                box["e"] = e
+        th = threading.Thread(target=go, daemon=True)
+        th.start()
+        while th.is_alive():
+            if self.cancel_flag.is_set():
+                return None   # 중단: 진행 중인 생성은 버린다
+            th.join(0.15)
+        if "e" in box:
+            raise box["e"]
+        return box.get("v")
+
     def run_agent(self, text, source="user", mode="normal"):
         """요청 하나를 끝까지 처리하고 최종 답을 돌려준다. mode='self'는 자유 시간의 생각(도구 제한, 화면엔 옅게)."""
         inner = mode == "self"
@@ -377,7 +396,10 @@ class Core:
                         # 반복하며 헛돌거나 마지막 단계면, 형식 자체를 'reply만 가능'으로 좁힌다
                         schema = json.loads(json.dumps(schema))
                         schema["properties"]["도구"]["enum"] = ["reply"]
-                    raw = self.brain.chat(msgs, schema=schema)
+                    raw = self._chat_cancellable(msgs, schema=schema)
+                    if raw is None:   # 생성 도중 주인이 중단함
+                        final = "중단했어요."
+                        break
                     msgs.append({"role": "assistant", "content": raw})
                     try:
                         a = json.loads(raw)
