@@ -136,6 +136,77 @@ def shell_is_dangerous(a):
 TOOLS["shell.run"]["danger_if"] = shell_is_dangerous
 
 
+# ───────────────────────── Kali (보안 도구 컨테이너) ─────────────────────────
+# 노트북의 Debian을 건드리지 않도록 Kali는 상주 컨테이너('kali') 안에 둔다.
+# host 네트워크 + raw 소켓이라 nmap SYN 스캔·OS 탐지가 그대로 된다. 대상·명령 제한은 두지 않는다.
+KALI_EXEC = ["sudo", "-n", "podman", "exec"]
+
+
+def _kali_missing(out, err):
+    t = (out + " " + err).lower()
+    return "no such container" in t or "no container with name" in t or "is not running" in t
+
+
+@tool("kali.run",
+      "Kali Linux 컨테이너 안에서 명령 한 줄을 실행한다. nmap을 비롯해 설치된 모든 Kali 보안 도구를 쓸 수 있다. "
+      "네트워크는 host 모드라 이 노트북이 보는 그대로의 네트워크를 스캔한다(raw 소켓·OS 탐지 가능). "
+      "예: 'nmap -sV 192.168.0.0/24', 'nmap -A 192.168.0.1'. 대화형 명령(msfconsole 등)은 쓰지 말고, "
+      "긴 스캔은 timeout(초)을 넉넉히 준다. 설치 안 된 도구는 kali.install로 먼저 넣는다.",
+      {"command": {"type": "string"}, "timeout": {"type": "integer", "description": "초, 기본 300"}},
+      risk="write", required=["command"])
+def kali_run(a, ctx):
+    cmd = a["command"].strip()
+    timeout = int(a.get("timeout") or 300)
+    try:
+        code, out, err = run(KALI_EXEC + ["kali", "bash", "-lc", cmd], timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return (f"[시간 초과 {timeout}초] 더 긴 스캔은 timeout을 늘리거나, 컨테이너 안에서 "
+                "'nohup 명령 > /root/out.txt 2>&1 &'로 백그라운드 실행하고 나중에 kali.run으로 /root/out.txt를 읽어라.")
+    if _kali_missing(out, err):
+        return "Kali 컨테이너가 없거나 꺼져 있다. shell.run으로 'sudo podman start kali'를 해라(없으면 다시 만들어야 한다)."
+    text = out + (("\n[stderr]\n" + err) if err else "")
+    return f"[종료코드 {code}]\n{clip(text) or '(출력 없음)'}"
+
+
+@tool("kali.install",
+      "Kali 컨테이너에 보안 도구(apt 패키지)를 추가로 설치한다. names: 공백으로 구분한 패키지 이름들. "
+      "예: 'sqlmap nikto hydra', 표준 도구 모음 전체는 'kali-linux-headless'. 큰 메타패키지는 몇 분 걸린다.",
+      {"names": {"type": "string"}}, risk="write", required=["names"])
+def kali_install(a, ctx):
+    names = " ".join(a["names"].split())
+    if not re.fullmatch(r"[a-z0-9.+_\- ]+", names):
+        return "패키지 이름만 넣어라(영문 소문자·숫자·.-+_ )."
+    try:
+        code, out, err = run(KALI_EXEC + ["kali", "bash", "-lc",
+                             f"apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y {names}"],
+                             timeout=1800)
+    except subprocess.TimeoutExpired:
+        return "[시간 초과] 설치가 오래 걸린다. shell.run으로 'sudo podman exec -d kali ...'로 백그라운드 설치하라."
+    if _kali_missing(out, err):
+        return "Kali 컨테이너가 없거나 꺼져 있다."
+    text = out + (("\n[stderr]\n" + err) if err else "")
+    return f"[종료코드 {code}]\n{clip(text)}"
+
+
+@tool("kali.gui", "Kali 컨테이너의 GUI 보안 도구를 ATANOR 화면(작업 공간 2)에 띄운다. app: 실행할 명령(예: 'zenmap', 'wireshark').",
+      {"app": {"type": "string"}}, risk="write", required=["app"])
+def kali_gui(a, ctx):
+    env = need_gui(ctx)
+    app = a["app"].strip()
+    wd = env.get("WAYLAND_DISPLAY", "wayland-1")
+    rt = env["XDG_RUNTIME_DIR"]
+    code, out, err = run(["sudo", "-n", "podman", "exec", "-d",
+                          "-e", f"WAYLAND_DISPLAY={wd}", "-e", "XDG_RUNTIME_DIR=/wl",
+                          "-e", "GDK_BACKEND=wayland,x11", "-e", "QT_QPA_PLATFORM=wayland;xcb",
+                          "-e", "DISPLAY=:0",
+                          "kali", "bash", "-lc", app], timeout=20)
+    if _kali_missing(out, err):
+        return "Kali 컨테이너가 없거나 꺼져 있다."
+    if code != 0:
+        return f"실행 실패: {clip(err or out)}"
+    return f"'{app}'을(를) 작업 공간 2에 띄웠다(뜨는 데 몇 초 걸릴 수 있다)."
+
+
 # ───────────────────────── 파일 ─────────────────────────
 @tool("file.read", "텍스트 파일을 읽는다.", {"path": {"type": "string"}}, required=["path"])
 def file_read(a, ctx):
