@@ -206,7 +206,15 @@ def quick(core, text):
     mp = re.search(r"((?:\d{1,3}\.){3}\d{1,3})", text)
     if mp and re.search(r"(포트|스캔|열린|점검|취약|뚫)", s):
         try:
-            return T.TOOLS["kali.run"]["fn"]({"command": f"nmap -A -T4 -Pn {mp.group(1)}", "timeout": 300}, core), []
+            raw = T.TOOLS["kali.run"]["fn"]({"command": f"nmap -A -T4 -Pn {mp.group(1)}", "timeout": 300}, core)
+            opens = re.findall(r"^(\d+/\w+)\s+open\s+(.*)$", raw, re.M)
+            osm = re.search(r"OS details: (.+)|Running: (.+)|Aggressive OS guesses: (.+)", raw)
+            head = f"{mp.group(1)} 스캔 결과:\n"
+            head += ("열린 포트:\n" + "\n".join(f"  {p}  {svc.strip()[:50]}" for p, svc in opens[:20])) if opens \
+                else "열린 포트 없음 — 전부 닫혔거나 필터됨(공격 표면 없음)."
+            if osm:
+                head += "\nOS 추정: " + next(g for g in osm.groups() if g).strip()[:80]
+            return head, []
         except Exception:  # noqa: BLE001
             return None
     # OSINT — IP/도메인이 뭔지·정보 → intel.gather
@@ -229,6 +237,30 @@ def quick(core, text):
                     return f"{kname} 열었어요.", []
                 except Exception:  # noqa: BLE001
                     return None
+    # 파일 목록 — 폴더에 뭐 있는지 → file.list (보기 좋게)
+    if re.search(r"(폴더|디렉[터토]리|파일).{0,12}(뭐|무엇|있|목록|리스트|보여)|(홈|home|바탕화면|데스크[톱탑]|다운로드)\s?(폴더|디렉[터토]리)", s, re.I):
+        path = "~"
+        if re.search(r"바탕화면|데스크[톱탑]|desktop", s, re.I):
+            path = "~/Desktop"
+        elif re.search(r"다운로드|download", s, re.I):
+            path = "~/Downloads"
+        mpath = re.search(r"(/[\w./\- ]+|~[\w./\- ]*)", text)
+        if mpath and mpath.group(1).strip() not in ("~",):
+            path = mpath.group(1).strip()
+        try:
+            items = T.TOOLS["file.list"]["fn"]({"path": path}, core)
+            if isinstance(items, list):
+                dirs = [i.get("이름") for i in items if i.get("종류") == "폴더"]
+                files = [i.get("이름") for i in items if i.get("종류") == "파일"]
+                out = []
+                if dirs:
+                    out.append("📁 " + ", ".join(dirs[:40]))
+                if files:
+                    out.append("📄 " + ", ".join(files[:40]))
+                return (f"{path} ({len(items)}개):\n" + "\n".join(out)) if out else f"{path}는 비어 있어요.", []
+            return (str(items)[:600], [])
+        except Exception:  # noqa: BLE001
+            return None
     if not s or len(s) > 32:
         return None
     steps = []
