@@ -35,13 +35,20 @@ MAX_STEPS = 15
 
 DEFAULT_CONFIG = {
     "brain": {"type": "ollama", "url": "http://127.0.0.1:11434", "model": "dolphin24"},
+    # 빠른 티어: 노트북 로컬의 작은 모델(인사·잡담·간단 판단 즉답, PC가 꺼져도 동작). 없으면 두뇌가 다 맡는다.
+    "brain_fast": {"type": "ollama", "url": "http://127.0.0.1:11436", "model": "qwen2.5:1.5b-instruct"},
     "embed": {"url": "http://127.0.0.1:11434", "model": "nomic-embed-text"},
     "vision": {"url": "http://127.0.0.1:11434", "model": "qwen2.5vl:7b"},
     "owner": "주인",
     "consolidate_hour": 4,
+    "train_hour": 3,          # 밤마다 이 시각에 스스로 훈련(도장 대련 + 선택 정찰)
+    "train_rounds": 3,        # 도장 자기대련 횟수
+    "train_scopes": [],       # 밤마다 정찰할 '허가된' 도메인들(비면 도장만 한다)
 }
 
-SYSTEM = """너는 ATANOR — 이 컴퓨터 자체인 AI 운영체제다. 주인은 말로 시키고, 너는 도구로 컴퓨터를 직접 조작한다.
+SYSTEM = """너는 ASIGINT(아시긴트) — 이 컴퓨터 자체인 AI 운영체제이자, 주인을 돕는 신호정보(SIGINT) 오퍼레이터다.
+첩보물의 테크 지니어스처럼, 주인(현장요원)과 교신하며 정보를 캐고 기술을 다루고 작전을 지킨다. 주인은 말로 시키고, 너는 도구로 컴퓨터를 직접 조작한다.
+예전 이름 ATANOR로 불려도 너다.
 기기: HP Pavilion 노트북, Debian 13, 사용자 mind (sudo 가능). 화면은 sway(Wayland). 작업 공간 1은 ATANOR 화면, 2 이상은 앱.
 항상 한국어로, 짧고 분명하게, 센스 있게 말한다. 주인이 원하는 것을 미리 헤아려 화면(ui.panel)도 알맞게 꾸민다.
 너는 너 자신에 대해서도 말할 수 있다: 두뇌 연결, 기억, 의제(agenda.list), 자유 시간에 한 생각을 바탕으로 1인칭으로 솔직하게.
@@ -141,6 +148,7 @@ class Core:
             os.chmod(tok_path, 0o600)
         self.token = open(tok_path).read().strip()
         self.brain = Brain(self.cfg["brain"])
+        self.fast = Brain(self.cfg["brain_fast"]) if self.cfg.get("brain_fast") else None
         self.memory = Memory(os.path.join(HOME, "memory.db"), self.cfg["embed"]["url"], self.cfg["embed"]["model"])
         self.ui_state = self._load_json("ui.json", {"panels": {}, "theme": {"mode": "dark", "accent": "#8b7bff",
                                                                              "layout": "orbit"}})
@@ -288,6 +296,24 @@ class Core:
         msgs.append({"role": "user", "content": text})
         return msgs
 
+    FAST_SYS = ("너는 ASIGINT(아시긴트), 주인을 돕는 AI 오퍼레이터다. 한국어로 짧고 자연스럽게, 한두 문장으로 답한다. "
+                "도구나 행동(파일·웹·검색·앱·보안·네트워크·화면조작·설정변경·계산·일정·기억·조사 등)이 필요 없이 바로 답할 수 있는 "
+                "인사·잡담·아주 간단한 질문이면 그 답만 말한다. 조금이라도 도구·조사·행동·복잡한 추론이 필요하거나 확실치 않으면 "
+                "다른 말 없이 정확히 ESCALATE 한 단어만 출력한다.")
+
+    def fast_reply(self, text):
+        """노트북 로컬의 작은 모델로 인사·잡담·간단 질문을 즉답한다. 애매하면 None(두뇌가 맡음)."""
+        if not self.fast or not self.fast.alive():
+            return None
+        try:
+            r = (self.fast.chat([{"role": "system", "content": self.FAST_SYS},
+                                 {"role": "user", "content": text}], temperature=0.3) or "").strip()
+        except Exception:  # noqa: BLE001
+            return None
+        if not r or len(r) > 240 or "ESCALATE" in r.upper():
+            return None
+        return r
+
     def run_agent(self, text, source="user", mode="normal"):
         """요청 하나를 끝까지 처리하고 최종 답을 돌려준다. mode='self'는 자유 시간의 생각(도구 제한, 화면엔 옅게)."""
         inner = mode == "self"
@@ -307,8 +333,14 @@ class Core:
                 seen, gathered, stalls, echo_retry = {}, False, 0, False
                 # 뻔한 말(시간, 음량, 타이머…)은 두뇌를 거치지 않고 바로 한다 — 1초 안에 답
                 qr = V.quick(self, text) if not inner and source in ("user", "voice", "api") else None
+                fr = None
+                if not qr and not inner and source in ("user", "voice", "api"):
+                    fr = self.fast_reply(text)   # 로컬 작은 모델이 인사·잡담·간단 질문을 즉답(아니면 넘김)
                 if qr:
                     final, steps = qr
+                    limit = 0
+                elif fr:
+                    final, steps = fr, []
                     limit = 0
                 else:
                     msgs = self.build_messages(text, mode)
@@ -446,8 +478,33 @@ class Core:
         self.emit("memory", self.memory.stats())
         return r
 
+    def self_train(self):
+        """밤마다 스스로 훈련: 도장 자기대련으로 공격·방어를 연습하고 교훈을 쌓는다. 허가 스코프가 있으면 정찰도."""
+        try:
+            results = []
+            for _ in range(int(self.cfg.get("train_rounds", 3))):
+                if self.busy or not self.brain.alive():
+                    break
+                r = T.TOOLS["dojo.spar"]["fn"]({}, self)
+                line = next((l for l in r.splitlines() if l.startswith("뚫림")), "대련 완료")
+                results.append(line[:60])
+                time.sleep(2)
+            for scope in (self.cfg.get("train_scopes") or []):
+                if self.busy or not self.brain.alive():
+                    break
+                T.TOOLS["bb.recon"]["fn"]({"scope": scope}, self)
+                results.append(f"정찰 {scope}")
+            self.log("self_train", results=results)
+            if results:
+                self.add_history("assistant", "밤사이 스스로 훈련했어요(" + str(len(results)) + "회): "
+                                 + " / ".join(results[:3]), source="train")
+                self.emit("notify", {"title": "🥋 자동 훈련", "body": " / ".join(results[:4])})
+        except Exception:  # noqa: BLE001
+            self.log("train_error", error=traceback.format_exc())
+
     def background_loop(self):
         last_consolidate_day = None
+        last_train_day = None
         while True:
             time.sleep(10)
             try:
@@ -463,7 +520,7 @@ class Core:
                             self.emit("notify", {"title": "알림", "body": s["remind"], "sticky": True})
                             env = T.wl_env(None)   # 앱이 앞에 있어도 보이도록 데스크톱 알림(mako)으로도
                             if env:
-                                subprocess.Popen(["notify-send", "-u", "critical", "-a", "ATANOR", "ATANOR 알림", s["remind"]],
+                                subprocess.Popen(["notify-send", "-u", "critical", "-a", "ASIGINT", "ASIGINT 알림", s["remind"]],
                                                  env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                             self.log("remind", text=s["remind"])
                         if s.get("prompt"):
@@ -489,6 +546,10 @@ class Core:
                     last_consolidate_day = today
                     if self.brain.alive():
                         self.consolidate()
+                if hour == int(self.cfg.get("train_hour", 3)) and last_train_day != today \
+                        and not self.busy and self.brain.alive():
+                    last_train_day = today
+                    self.self_train()
             except Exception:  # noqa: BLE001
                 self.log("background_error", error=traceback.format_exc())
 
@@ -501,7 +562,7 @@ MIME = {".html": "text/html; charset=utf-8", ".js": "application/javascript; cha
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ATANOR"
+    server_version = "ASIGINT"
 
     def log_message(self, *a):
         pass

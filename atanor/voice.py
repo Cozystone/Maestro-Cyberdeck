@@ -20,7 +20,7 @@ from atanor import tools as T
 TTS_DIR = os.path.expanduser("~/.atanor/tts")
 VOICES = {"남성": "ko-KR-InJoonNeural", "여성": "ko-KR-SunHiNeural", "male": "ko-KR-InJoonNeural",
           "female": "ko-KR-SunHiNeural"}
-WAKE = re.compile(r"^\s*(아[타다따][노놀][르를]?|아탄오르|자비스|jarvis|atanor|아타노)[\s,.!?~야아]*", re.I)
+WAKE = re.compile(r"^\s*(아시[긴진]트|아식[긴진]트|asigint|아[타다따][노놀][르를]?|아탄오르|자비스|jarvis|atanor|아타노)[\s,.!?~야아]*", re.I)
 FIX = re.compile(r"(알려|틀어|줄여|올려|키워|꺼|켜|해|봐|보여|닫아|열어|적어|찾아|읽어|띄워|바꿔|낮춰|높여|깨워|맞춰|멈춰)져(?=[.!?\s]*$)")
 
 
