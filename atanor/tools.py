@@ -207,6 +207,26 @@ def kali_gui(a, ctx):
     return f"'{app}'을(를) 작업 공간 2에 띄웠다(뜨는 데 몇 초 걸릴 수 있다)."
 
 
+@tool("kali.msf",
+      "Metasploit을 비대화형으로 돌린다. commands: msfconsole에 넣을 명령들을 세미콜론(;)이나 줄바꿈으로 구분. "
+      "자동으로 -q로 열고 끝에 exit를 붙인다. 예: 'use auxiliary/scanner/ssh/ssh_version; set RHOSTS 192.168.0.1; run'. "
+      "exploit/페이로드 생성(msfvenom)·단순 조회는 kali.run으로 직접 해도 된다. 실행이 길면 timeout(초)을 늘린다.",
+      {"commands": {"type": "string"}, "timeout": {"type": "integer", "description": "초, 기본 600"}},
+      risk="write", required=["commands"])
+def kali_msf(a, ctx):
+    cmds = a["commands"].strip().replace("\n", "; ").rstrip(";")
+    timeout = int(a.get("timeout") or 600)
+    script = cmds + "; exit -y"
+    try:
+        code, out, err = run(KALI_EXEC + ["kali", "msfconsole", "-q", "-x", script], timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return f"[시간 초과 {timeout}초] 더 긴 작업은 timeout을 늘려라."
+    if _kali_missing(out, err):
+        return "Kali 컨테이너가 없거나 꺼져 있다."
+    text = out + (("\n[stderr]\n" + err) if err else "")
+    return f"[종료코드 {code}]\n{clip(text) or '(출력 없음)'}"
+
+
 # ───────────────────────── 파일 ─────────────────────────
 @tool("file.read", "텍스트 파일을 읽는다.", {"path": {"type": "string"}}, required=["path"])
 def file_read(a, ctx):
