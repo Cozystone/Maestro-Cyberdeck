@@ -245,6 +245,45 @@ def net_tor(a, ctx):
     return (out or err or f"[종료코드 {code}]").strip()
 
 
+def _tor(action):
+    return run(["sudo", "-n", "/opt/atanor/system/atanor-tor-route.sh", action], timeout=20)
+
+
+@tool("bb.recon",
+      "버그바운티 정찰을 스스로 끝까지 돌린다: 스코프 도메인 하나를 받아 서브도메인 → DNS 해석 → 라이브 HTTP/기술 식별 → "
+      "알려진 취약점 템플릿(nuclei)까지 자동으로 하고, 사람이 파볼 후보를 요약해 돌려준다. "
+      "익스플로잇·공격·제출은 하지 않는다(그건 사람이 확인하고 직접 신고). "
+      "반드시 버그바운티 프로그램 '스코프'에 포함된 도메인에만 쓴다 — 스코프 밖은 불법이다. "
+      "deep=true면 URL 수집까지. header에 프로그램이 요구하는 식별 헤더를 넣는다(예: 'X-Bug-Bounty: 내아이디'). "
+      "버그바운티는 Tor를 금지하는 곳이 많아 스캔 동안 Tor를 잠시 끄고 끝나면 되돌린다. 큰 스코프는 시간이 걸린다.",
+      {"scope": {"type": "string", "description": "스코프 도메인 하나(예: example.com). 와일드카드·URL 아님"},
+       "deep": {"type": "boolean"},
+       "header": {"type": "string", "description": "프로그램 요구 식별 헤더"}},
+      risk="write", required=["scope"])
+def bb_recon(a, ctx):
+    scope = (a.get("scope") or "").strip().lower().lstrip("*.")
+    if not re.fullmatch(r"(?:[a-z0-9-]+\.)+[a-z]{2,}", scope):
+        return "scope는 도메인 하나여야 한다(예: example.com). 와일드카드(*.x)나 URL은 도메인만 남겨서 넣어라."
+    mode = "deep" if a.get("deep") else "normal"
+    hdr = a.get("header") or "X-Bug-Bounty: atanor-recon"
+    tor_was = (_tor("status")[1] or "").strip()
+    if tor_was == "ON":
+        _tor("off")
+    try:
+        code, out, err = run(["sudo", "-n", "podman", "exec", "-e", f"BB_HEADER={hdr}", "kali",
+                              "bash", "/root/bb/bb-recon.sh", scope, mode], timeout=1700)
+        text = out + (("\n[stderr]\n" + err) if err else "")
+    except subprocess.TimeoutExpired:
+        text = ("[시간 초과] 스코프가 커서 오래 걸린다. 컨테이너 안에서 백그라운드로 돌려라: "
+                f"kali.run로 'nohup bash /root/bb/bb-recon.sh {scope} {mode} > /root/bb/{scope}.log 2>&1 &' 실행 뒤 "
+                f"나중에 /root/bb/{scope}.log를 kali.run로 읽는다.")
+    finally:
+        if tor_was == "ON":
+            _tor("on")
+    tail = " (Tor 다시 켜짐)" if tor_was == "ON" else ""
+    return f"[정찰 끝{tail}]\n{clip(text, 8000)}"
+
+
 # ───────────────────────── 파일 ─────────────────────────
 @tool("file.read", "텍스트 파일을 읽는다.", {"path": {"type": "string"}}, required=["path"])
 def file_read(a, ctx):
