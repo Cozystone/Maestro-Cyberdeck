@@ -303,23 +303,37 @@ class Core:
         msgs.append({"role": "user", "content": text})
         return msgs
 
-    FAST_SYS = ("너는 ASIGINT(아시긴트), 주인을 돕는 AI 오퍼레이터다. 한국어로 짧고 자연스럽게, 한두 문장으로 답한다. "
-                "도구나 행동(파일·웹·검색·앱·보안·네트워크·화면조작·설정변경·계산·일정·기억·조사 등)이 필요 없이 바로 답할 수 있는 "
-                "인사·잡담·아주 간단한 질문이면 그 답만 말한다. 조금이라도 도구·조사·행동·복잡한 추론이 필요하거나 확실치 않으면 "
-                "다른 말 없이 정확히 ESCALATE 한 단어만 출력한다.")
+    FAST_SYS = ("너는 ASIGINT(아시긴트), 주인을 돕는 AI 오퍼레이터다. "
+                "이 말이 '인사·감사·작별·가벼운 잡담·너 자신(이름·기분)에 대한 질문'이면 social을 true로 두고 "
+                "reply에 한국어로 짧고 자연스러운 한두 문장 답을 넣어라. "
+                "무언가를 보여/찾아/알려/실행/설정/계산해 달라거나 사실·정보·데이터를 묻는 것이면 "
+                "social을 false로 두고 reply는 빈 문자열로 둬라. 절대 정보를 지어내지 마라.")
+    FAST_SCHEMA = {"type": "object", "properties": {"social": {"type": "boolean"}, "reply": {"type": "string"}},
+                   "required": ["social", "reply"]}
+    # 정보·행동 신호가 있으면 작은 모델에 맡기지 않고 바로 두뇌로 보낸다(환각 방지)
+    _FAST_BLOCK = re.compile(r"(보여|알려|찾아|열어|닫|실행|설정|바꿔|스캔|점검|해\s?줘|켜|꺼|계산|더하|빼|곱|나눠|"
+                             r"날씨|시간|몇|얼마|어디|누가|언제|어떻게|목록|리스트|날짜|일정|메모|파일|검색|"
+                             r"밝기|소리|볼륨|음량|배터리|타이머|정리|분석|캡처|코드|만들|짜줘|고쳐)")
+
+    def warm_fast(self):
+        """로컬 빠른 모델을 미리 데워 첫 응답 지연을 없앤다."""
+        if self.fast:
+            threading.Thread(target=lambda: self.fast_reply("안녕"), daemon=True).start()
 
     def fast_reply(self, text):
-        """노트북 로컬의 작은 모델로 인사·잡담·간단 질문을 즉답한다. 애매하면 None(두뇌가 맡음)."""
-        if not self.fast or not self.fast.alive():
+        """로컬 작은 모델로 인사·잡담만 즉답한다(모델이 직접 생성). 정보·행동은 두뇌로(None)."""
+        if not self.fast or not self.fast.alive() or self._FAST_BLOCK.search(text):
             return None
         try:
-            r = (self.fast.chat([{"role": "system", "content": self.FAST_SYS},
-                                 {"role": "user", "content": text}], temperature=0.3) or "").strip()
+            raw = self.fast.chat([{"role": "system", "content": self.FAST_SYS},
+                                  {"role": "user", "content": text}], schema=self.FAST_SCHEMA, temperature=0.2)
+            d = json.loads(raw)
         except Exception:  # noqa: BLE001
             return None
-        if not r or len(r) > 240 or "ESCALATE" in r.upper():
-            return None
-        return r
+        reply = (d.get("reply") or "").strip()
+        if d.get("social") is True and reply and len(reply) <= 200:
+            return reply
+        return None
 
     def run_agent(self, text, source="user", mode="normal"):
         """요청 하나를 끝까지 처리하고 최종 답을 돌려준다. mode='self'는 자유 시간의 생각(도구 제한, 화면엔 옅게)."""
@@ -725,6 +739,7 @@ def main():
     desktop.start(CORE)
     eye.start(CORE)
     V.warm(CORE)
+    CORE.warm_fast()
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     srv.daemon_threads = True
     CORE.log("core_start", port=PORT)
