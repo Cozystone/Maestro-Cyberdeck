@@ -317,6 +317,54 @@ def bb_recon(a, ctx):
     return f"[정찰 끝{tail}]\n{clip(text, 8000)}"
 
 
+# ───────────────────────── 도장(자기대련) ─────────────────────────
+DOJO_EXEC = ["sudo", "-n", "podman", "exec", "kali", "bash", "-lc"]
+
+
+def _dojo_up():
+    run(DOJO_EXEC + ["curl -s -m2 http://127.0.0.1:8099/ >/dev/null 2>&1 || "
+                     "(nohup python3 /root/dojo/target.py >/root/dojo/target.out 2>&1 & sleep 1.5)"], timeout=25)
+
+
+@tool("dojo.spar",
+      "자기대련 1회: ATANOR가 자기 소유 훈련 표적(127.0.0.1:8099, 격리된 허수아비)을 red로 공격하고 blue로 탐지해 "
+      "점수와 교훈을 낸다. 표적이 자기 것이라 100% 합법이다. 교훈은 기억에 저장돼 공격·방어가 점점 강해진다. "
+      "실력을 키우거나 새 공격·방어를 실험할 때 쓴다.",
+      {}, risk="write")
+def dojo_spar(a, ctx):
+    _dojo_up()
+    try:
+        code, out, err = run(DOJO_EXEC + ["bash /root/dojo/spar.sh"], timeout=90)
+    except subprocess.TimeoutExpired:
+        return "[시간 초과] 표적이 안 떴을 수 있다. dojo.reset 후 다시 시도."
+    text = out + (("\n[stderr]\n" + err) if err else "")
+    try:
+        m = re.search(r"LESSON:\s*(.+)", text)
+        sc = re.search(r"뚫림 (\d+)/(\d+)", text)
+        if ctx is not None and getattr(ctx, "memory", None) and m:
+            imp = 0.7 + (0.2 if sc and int(sc.group(1)) >= 3 else 0.0)
+            ctx.memory.remember("도장 자기대련 교훈: " + m.group(1), kind="procedural",
+                                importance=min(imp, 0.9), source="dojo")
+    except Exception:  # noqa: BLE001
+        pass
+    return clip(text, 6000)
+
+
+@tool("dojo.reset", "훈련 표적을 새로 띄운다(DB·로그 초기화).", risk="write")
+def dojo_reset(a, ctx):
+    run(DOJO_EXEC + ["pkill -f /root/dojo/target.py 2>/dev/null; sleep 1; : > /root/dojo/access.log; "
+                     "nohup python3 /root/dojo/target.py >/root/dojo/target.out 2>&1 & sleep 1.5; "
+                     "curl -s -m3 http://127.0.0.1:8099/ >/dev/null && echo up || echo down"], timeout=30)
+    return "훈련 표적을 재시작했다."
+
+
+@tool("dojo.status", "도장 표적 상태와 최근 요청.", risk="read")
+def dojo_status(a, ctx):
+    _, out, _ = run(DOJO_EXEC + ["curl -s -m2 http://127.0.0.1:8099/ >/dev/null 2>&1 && echo '표적: 가동 중' || echo '표적: 꺼짐'; "
+                                 "echo; echo 최근요청:; tail -3 /root/dojo/access.log 2>/dev/null"], timeout=15)
+    return out or "(상태 확인 실패)"
+
+
 # ───────────────────────── 파일 ─────────────────────────
 @tool("file.read", "텍스트 파일을 읽는다.", {"path": {"type": "string"}}, required=["path"])
 def file_read(a, ctx):
