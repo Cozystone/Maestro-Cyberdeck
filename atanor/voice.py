@@ -202,6 +202,20 @@ def quick(core, text):
             return T.TOOLS["net.devices"]["fn"]({}, core), []
         except Exception:  # noqa: BLE001
             return None
+    # 한 기기 포트 스캔 — IP + 스캔/포트 → kali.run nmap (약한 모델 우회)
+    mp = re.search(r"((?:\d{1,3}\.){3}\d{1,3})", text)
+    if mp and re.search(r"(포트|스캔|열린|점검|취약|뚫)", s):
+        try:
+            return T.TOOLS["kali.run"]["fn"]({"command": f"nmap -A -T4 -Pn {mp.group(1)}", "timeout": 300}, core), []
+        except Exception:  # noqa: BLE001
+            return None
+    # OSINT — IP/도메인이 뭔지·정보 → intel.gather
+    mo = re.search(r"((?:\d{1,3}\.){3}\d{1,3}|(?:[a-z0-9-]+\.)+[a-z]{2,})", text, re.I)
+    if mo and re.search(r"(뭐|무엇|누구|어떤|정체|정보|조회|알아|대해|서버|도메인)", s):
+        try:
+            return T.TOOLS["intel.gather"]["fn"]({"subject": mo.group(1)}, core), []
+        except Exception:  # noqa: BLE001
+            return None
     if not s or len(s) > 32:
         return None
     steps = []
