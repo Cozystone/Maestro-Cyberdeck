@@ -191,6 +191,78 @@ def _call(core, steps, name, args):
     return r["result"]
 
 
+def _gateway():
+    _, out, _ = T.run(["bash", "-lc", "ip route 2>/dev/null | awk '/default/{print $3; exit}'"])
+    return out.strip()
+
+
+def _scan_targets(core, text, s):
+    """텍스트의 IP와 기기 이름(아이폰·공유기·NAS 등)을 스캔할 IP 목록으로 바꾼다."""
+    ips = re.findall(r"(?:\d{1,3}\.){3}\d{1,3}", text)
+    low = (text + " " + s).lower()
+    if re.search(r"공유기|라우터|게이트웨이|router|gateway", low):
+        g = _gateway()
+        if g:
+            ips.append(g)
+    NAME = [(r"아이폰|iphone", "iphone"), (r"아이패드|ipad", "ipad|aepeul"),
+            (r"나스|시놀로지|synology|디스크스테이션", "synolog|diskstation"),
+            (r"맥북|macbook", "macbook|ucbook"), (r"갤럭시 ?북|galaxybook", "galaxybook"),
+            (r"애플 ?티?비|apple ?tv", "appltv|appletv"), (r"세탁기|washer|laundry", "laundry"),
+            (r"esp32|아두이노", "esp32")]
+    want = [nm for pat, nm in NAME if re.search(pat, low)]
+    if want:
+        _, out, _ = T.run(["sudo", "-n", "podman", "exec", "kali", "nmap", "-sn", "192.168.0.0/24"], timeout=80)
+        for line in out.splitlines():
+            m = re.match(r"Nmap scan report for (?:(\S+) \()?([\d.]+)", line)
+            if m and m.group(1) and any(re.search(w, m.group(1), re.I) for w in want):
+                ips.append(m.group(2))
+    seen = set()
+    return [ip for ip in ips if not (ip in seen or seen.add(ip))]
+
+
+def _format_scan(core, targets):
+    if len(targets) == 1:
+        raw = T.TOOLS["kali.run"]["fn"]({"command": f"nmap -A -T4 -Pn {targets[0]}", "timeout": 300}, core)
+        opens = re.findall(r"^(\d+/\w+)\s+open\s+(.*)$", raw, re.M)
+        osm = re.search(r"OS details: (.+)|Running: (.+)|Aggressive OS guesses: (.+)", raw)
+        head = f"{targets[0]} 스캔 결과:\n"
+        head += ("열린 포트:\n" + "\n".join(f"  {p}  {svc.strip()[:50]}" for p, svc in opens[:20])) if opens \
+            else "열린 포트 없음 — 전부 닫혔거나 필터됨(공격 표면 없음)."
+        if osm:
+            head += "\nOS 추정: " + next(g for g in osm.groups() if g).strip()[:80]
+        return head
+    parts = []
+    for ip in targets[:6]:
+        raw = T.TOOLS["kali.run"]["fn"]({"command": f"nmap -sS -T4 -F -Pn {ip}", "timeout": 120}, core)
+        opens = re.findall(r"^(\d+/\w+)\s+open\s+(.*)$", raw, re.M)
+        parts.append((f"{ip}: " + ", ".join(f"{p} {svc.strip()[:18]}" for p, svc in opens[:8])) if opens
+                     else f"{ip}: 열린 포트 없음")
+    return "포트 스캔 결과:\n" + "\n".join(parts)
+
+
+def _security_audit(core):
+    """집 네트워크 전체에서 열린 포트가 있는 기기를 찾아 보안 상태를 간추린다."""
+    raw = T.TOOLS["kali.run"]["fn"]({"command": "nmap -sS -T4 -F --open 192.168.0.0/24", "timeout": 300}, core)
+    hosts, cur, ports = [], None, []
+    for line in raw.splitlines():
+        m = re.match(r"Nmap scan report for (.+)", line)
+        if m:
+            if cur and ports:
+                hosts.append((cur, ports))
+            cur, ports = m.group(1).strip(), []
+        mo = re.match(r"(\d+/\w+)\s+open\s+(.*)", line)
+        if mo:
+            ports.append(f"{mo.group(1)} {mo.group(2).strip()[:18]}")
+    if cur and ports:
+        hosts.append((cur, ports))
+    if not hosts:
+        return "집 네트워크 보안 점검: 열린 포트가 있는 기기가 하나도 없어요 — 내부는 아주 깨끗합니다."
+    out = [f"집 네트워크 보안 점검 — 포트가 열린 기기 {len(hosts)}대:"]
+    out += [f"  {h}: {', '.join(ps[:6])}" for h, ps in hosts[:12]]
+    out.append("→ 모르는 기기나 NAS·카메라가 열려 있으면 주의. 바깥(인터넷) 노출(공유기 포트포워딩·UPnP)은 따로 '외부 노출 점검'을 하세요.")
+    return "\n".join(out)
+
+
 def quick(core, text):
     """뻔한 말이면 (답, 단계들). 아니면 None — 두뇌가 맡는다."""
     s = re.sub(r"[.!?~]+$", "", text.strip())
@@ -202,21 +274,34 @@ def quick(core, text):
             return T.TOOLS["net.devices"]["fn"]({}, core), []
         except Exception:  # noqa: BLE001
             return None
-    # 한 기기 포트 스캔 — IP + 스캔/포트 → kali.run nmap (약한 모델 우회)
-    mp = re.search(r"((?:\d{1,3}\.){3}\d{1,3})", text)
-    if mp and re.search(r"(포트|스캔|열린|점검|취약|뚫)", s):
+    # 음악·영상 재생 — '틀어/재생/들려' + 미디어 맥락 → media.play (약한 모델 우회)
+    if re.search(r"(틀어|재생|들려|플레이|play)", s, re.I) and re.search(r"(음악|노래|곡|영상|유튜브|youtube|라디오|플레이리스트|브금|bgm|소리)", s, re.I):
+        q = re.sub(r"(유튜브에서|유튜브|youtube|에서|좀|노래|음악|곡|영상|플레이리스트|라디오|틀어\s?줘?|재생해?\s?줘?|들려\s?줘?|플레이\s?해?\s?줘?|play|해\s?줘)", " ", text, flags=re.I).strip()
         try:
-            raw = T.TOOLS["kali.run"]["fn"]({"command": f"nmap -A -T4 -Pn {mp.group(1)}", "timeout": 300}, core)
-            opens = re.findall(r"^(\d+/\w+)\s+open\s+(.*)$", raw, re.M)
-            osm = re.search(r"OS details: (.+)|Running: (.+)|Aggressive OS guesses: (.+)", raw)
-            head = f"{mp.group(1)} 스캔 결과:\n"
-            head += ("열린 포트:\n" + "\n".join(f"  {p}  {svc.strip()[:50]}" for p, svc in opens[:20])) if opens \
-                else "열린 포트 없음 — 전부 닫혔거나 필터됨(공격 표면 없음)."
-            if osm:
-                head += "\nOS 추정: " + next(g for g in osm.groups() if g).strip()[:80]
-            return head, []
+            return T.TOOLS["media.play"]["fn"]({"query": q or "음악"}, core), []
         except Exception:  # noqa: BLE001
             return None
+    if re.search(r"(음악|노래|재생).{0,4}(멈춰|꺼|정지|중지|스톱|stop)", s, re.I):
+        try:
+            return T.TOOLS["media.stop"]["fn"]({}, core), []
+        except Exception:  # noqa: BLE001
+            return None
+    # 포트 스캔 — IP 또는 기기 이름(아이폰·공유기 등), 여러 대도 → kali nmap
+    # 네트워크 보안 점검 — 전체 LAN에서 노출된 기기 찾기
+    if re.search(r"(네트워크|집|와이파이|내부|lan).{0,10}(보안|안전|위험|노출|취약).{0,6}(점검|검사|감사|진단|확인|봐|체크)"
+                 r"|보안 ?(점검|감사|진단)|네트워크 ?점검|안전한지 ?(확인|봐|점검)", s, re.I):
+        try:
+            return _security_audit(core), []
+        except Exception:  # noqa: BLE001
+            return None
+    # 포트 스캔 — IP 또는 기기 이름(아이폰·공유기 등), 여러 대도 → kali nmap
+    if re.search(r"(포트|스캔|취약|뚫|열린 ?포트)", s):
+        targets = _scan_targets(core, text, s)
+        if targets:
+            try:
+                return _format_scan(core, targets), []
+            except Exception:  # noqa: BLE001
+                return None
     # OSINT — IP/도메인이 뭔지·정보 → intel.gather
     mo = re.search(r"((?:\d{1,3}\.){3}\d{1,3}|(?:[a-z0-9-]+\.)+[a-z]{2,})", text, re.I)
     if mo and re.search(r"(뭐|무엇|누구|어떤|정체|정보|조회|알아|대해|서버|도메인)", s):

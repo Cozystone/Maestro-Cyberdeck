@@ -281,6 +281,27 @@ def net_devices(a, ctx):
     return f"집 네트워크({net}) 기기 {len(devices)}대:\n" + "\n".join(devices) if devices else f"기기를 못 찾음.\n{clip(out, 1500)}"
 
 
+@tool("media.play", "음악·영상을 재생한다. query로 유튜브에서 찾아 바로 튼다(mpv). 예: '로파이 음악', '아이유 신곡'. "
+      "검색 페이지만 여는 게 아니라 실제로 재생한다. audio_only=true면 소리만.",
+      {"query": {"type": "string"}, "audio_only": {"type": "boolean"}}, risk="write", required=["query"])
+def media_play(a, ctx):
+    q = (a.get("query") or "").strip()
+    if not q:
+        return "뭘 틀까요?"
+    env = need_gui(ctx)
+    subprocess.run(["pkill", "-f", "mpv.*ytdl"], check=False)
+    fmt = "bestaudio/best" if a.get("audio_only") else "best"
+    subprocess.Popen(["mpv", "--no-terminal", "--force-window=immediate", f"--ytdl-format={fmt}",
+                      f"ytdl://ytsearch1:{q}"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return f"'{q}' 틀었어요."
+
+
+@tool("media.stop", "재생 중인 음악·영상을 멈춘다.", risk="write")
+def media_stop(a, ctx):
+    r = subprocess.run(["pkill", "-f", "mpv"], check=False)
+    return "멈췄어요." if r.returncode == 0 else "재생 중인 게 없어요."
+
+
 def _tor(action):
     return run(["sudo", "-n", "/opt/atanor/system/atanor-tor-route.sh", action], timeout=20)
 
